@@ -1,3 +1,5 @@
+> 纵览News 个人分支：仅供懒猫受保护入口使用。默认固定个人身份，无登录、注册、密码或单用户开关。Mac 与 iPhone 共用 SQLite 阅读状态；不导入旧游客记录。开发与验收进度见 [当前工作记录](/Users/huangzhipeng/Documents/App-ZhiXing/NookDeck/docs/zonglan-news.md)。下文保留上游功能说明，管理功能的当前边界以“个人身份与权限”节为准。
+
 # QMReader
 
 **中文** | [English](#english)
@@ -32,7 +34,7 @@ QMReader 是向阳乔木自用的 RSS 阅读器。它不是一个通用新闻门
 
 - **先快后慢:** 新 RSS 条目先进入列表，AI 翻译和改写慢慢补齐。
 - **先读后加工:** 原文、中文翻译、乔木风格改写并排存在同一篇文章下。
-- **先个人后公开:** 登录用户的翻译、改写、点评、对话可以变成公开资产，后续被搜索、RSS、贡献者页复用。
+- **先个人后公开:** 个人身份的翻译、改写、点评、对话可以变成公开资产，后续被搜索、RSS、贡献者页复用。
 - **先站点后自托管:** 你可以直接看正式站，也可以拿代码部署自己的阅读工作台。
 
 ## 产品巡游
@@ -108,10 +110,6 @@ HOST=127.0.0.1 PORT=3000 npm start
 | `AI_API_KEY` | 空 | 非 DeepSeek provider 的服务端 key |
 | `AI_BASE_URL` | 空 | 非 DeepSeek provider 的 OpenAI/Anthropic-compatible base URL |
 | `AI_MODEL` | 空 | 非 DeepSeek provider 的模型名 |
-| `ADMIN_EMAIL` | 空 | 管理员登录邮箱 |
-| `ADMIN_PASSWORD` | 空 | 管理员登录密码，重启时会同步更新 |
-| `ADMIN_NAME` | `向阳乔木` | 管理员公开显示名 |
-| `COOKIE_SECURE` | 空 | 设为 `1` 时强制 session cookie 使用 Secure |
 | `HOST` | `0.0.0.0` | Node 监听地址 |
 | `PORT` | `8080` | Node 监听端口 |
 | `STARTUP_REFRESH_DELAY_MS` | `30000` | 启动后延迟多少毫秒触发首次全量刷新；`-1` 表示禁用 |
@@ -132,15 +130,13 @@ HOST=127.0.0.1 PORT=3000 npm start
 | `UMAMI_WEBSITE_ID` | 空 | 可选 Umami 站点 ID |
 | `UMAMI_SRC` | `https://umami.qiaomu.ai/script.js` | 可选 Umami 脚本地址 |
 
-## 账号与权限
+## 个人身份与权限
 
-| 角色 | 权限 |
-|---|---|
-| 游客 | 浏览文章、公开翻译、公开改写、公开点评和公开文章对话 |
-| 注册用户 | 提交链接、发布点评，生成并保存翻译/改写，围绕当前文章对话，管理自己的公开资产 |
-| 管理员 | 手动刷新、启用/禁用信息源、触发标题补翻译、管理源状态，以及清理投稿、封禁/恢复违规用户 |
+服务自动使用固定的 `zonglan-personal` 身份（普通用户权限），无任何登录或模式切换。`/api/me` 返回该身份；已读、收藏、历史通过既有接口写入 SQLite，另一端刷新后读取。旧 Cookie 不会选择用户或提升权限；认证与密码接口已移除。
 
-注册只校验邮箱格式和密码长度，不做邮件验证码。管理员账号通过环境变量 seed。
+旧账号、文章关联和数据库列保留兼容，不继承其阅读状态，也不自动删除生产数据。新身份从空状态开始。懒猫认证负责访问保护，Compose 继续只绑定 Linux `127.0.0.1:3088`；不要将此无应用登录的服务直接暴露给不受信任的访问者。保留跨站请求检查和原有安全响应头。
+
+原管理员接口继续拒绝普通个人身份，包括用户管理、投稿审核、全量手工刷新和源开关；不会因为取消登录就自动提升为管理员。原投稿审核流程暂未改造，提交后不能从个人界面完成审核，留待后续功能删减处理。已启用源的刷新和原自动刷新机制保留。
 
 ## AI 与隐私边界
 
@@ -148,7 +144,7 @@ HOST=127.0.0.1 PORT=3000 npm start
 - 用户在页面里配置的 AI provider/API key 保存在浏览器 localStorage，不写入 SQLite。
 - 文章对话、模型列表和连接测试会把用户 key 随请求发送到本站后端代理调用。
 - Base URL 必须是公开 `https://` 地址，服务端会拒绝本机和内网地址，降低 SSRF 风险。
-- 读者投稿必须登录，且先进入隔离审核队列；提交动作不会访问目标站，管理员通过后才执行 DNS/IP、端口、路径和重定向复核并抓取。系统拒绝内网、IP 字面量、探针接口与后台面板，限制每个账号最多 3 条待审记录，并对注册、登录和投稿限流。
+- 投稿使用固定个人身份，先进入隔离审核队列；提交动作不会访问目标站，管理员通过后才执行 DNS/IP、端口、路径和重定向复核并抓取。系统拒绝内网、IP 字面量、探针接口与后台面板，限制每个账号最多 3 条待审记录，并对投稿限流。
 - 运行数据在 `data/qmreader.sqlite` 和 `data/cache.json`，默认不提交到 Git。
 - 公开贡献内容会显示在资产页、贡献者页、sitemap 和 RSS；不要在公开点评或对话里写私密信息。
 
@@ -214,9 +210,9 @@ node scripts/refresh-worker.js --kind=auto-rewrite --sources=hackernews
 | GET | `/contributors` | 公开贡献者目录 |
 | GET | `/contributors/:id.xml` | 贡献者公开资产 RSS |
 | GET | `/llms.txt` | 站点定位、公开目录、RSS 和 sitemap 汇总 |
-| POST | `/api/submit-link` | 注册用户提交链接到隔离审核队列，成功返回 202 |
+| POST | `/api/submit-link` | 个人身份提交链接到隔离审核队列，成功返回 202 |
 
-需要登录或管理员权限的接口包括提交链接、生成翻译/改写、发布点评、文章对话、刷新源、启用/禁用源和违规用户管理等。详见 `server.js` 路由。
+个人内容接口使用固定身份；管理员接口仍保持拒绝。详见 `server.js` 路由。
 
 ## 部署
 
@@ -245,12 +241,16 @@ systemctl restart qmreader
 
 ### Docker Compose
 
+纵览News 的 Mac→Linux 日常更新使用 [运维脚本说明](ops/news/README.md)，包含备份、SCP、构建、重建与健康检查；人工验收后再提交 Git。
+
 ```bash
 cp .env.example .env
 docker compose up -d --build
 ```
 
 默认容器内端口 `8080`，宿主机私有端口 `127.0.0.1:3088`。
+
+懒猫反向代理部署时，在现有 `.env` 设置 `PUBLIC_ORIGIN=https://zonglan-news.jerryhuang.heiyu.space`，重建并重建容器后生效。它指定写入请求允许的外部来源（协议、域名、端口），避免代理改写 Host 后误拒绝同源请求；不接受任意转发头或跨站来源。保留懒猫访问保护。本地直接访问开发服务时留空，不要用 `.env.example` 覆盖现有 `.env`。
 
 ## 项目结构
 
@@ -294,7 +294,7 @@ npm run refresh:worker
 - 某些站点会被 Cloudflare 或反爬策略拦截，无法稳定抓取。
 - AI 生成质量依赖外部 provider，可能遇到限流、模型变更或费用问题。
 - 默认 SQLite 适合个人/小团队自托管，不是高并发多租户服务。
-- 注册没有邮件验证，不适合直接作为开放社区账号系统。
+- 本分支不提供应用登录，必须由懒猫或等效受保护入口限制访问。
 - Google S2 favicon 在部分网络环境不可用，会回退到内置安全占位图标。
 - GitHub social preview 暂未自动配置，需要仓库发布后在 GitHub Settings 手动上传。
 
@@ -390,7 +390,6 @@ Important variables:
 
 - `DEEPSEEK_API_KEY`: server-side key for title translation and default rewriting.
 - `DEEPSEEK_MODEL`: default `deepseek-v4-flash`.
-- `ADMIN_EMAIL` / `ADMIN_PASSWORD`: admin account seed.
 - `HOST` / `PORT`: HTTP bind address and port.
 - `STARTUP_REFRESH_DELAY_MS`: startup refresh delay, or `-1` to disable.
 - `FRESHNESS_SWEEP_INTERVAL_MS`: stale-source sweep interval.

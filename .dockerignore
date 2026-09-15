@@ -8,3 +8,8 @@ npm-debug.log
 !.env.example
 data/*.png
 data/*.log
+
+# Local deployment artifacts and all runtime data
+data/
+.news-deploy/
+.news-deploy.lock

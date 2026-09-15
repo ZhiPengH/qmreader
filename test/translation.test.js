@@ -10,6 +10,19 @@ process.env.QMREADER_DATA_DIR = testDataDir;
 const deepseek = require('../lib/deepseek');
 const store = require('../lib/store');
 
+// Historical identities are fixtures, not a production account-creation API.
+function fixtureUser({ email, displayName, role = 'user' }) {
+  const { DatabaseSync } = require('node:sqlite');
+  const db = new DatabaseSync(path.join(testDataDir, 'qmreader.sqlite'));
+  const id = require('node:crypto').randomUUID();
+  const t = Date.now();
+  db.prepare(`INSERT INTO users (id, email, display_name, role, password_hash, password_salt, created_at, updated_at)
+    VALUES (?, ?, ?, ?, '', '', ?, ?)`).run(id, email, displayName, role, t, t);
+  db.close();
+  return { id, email, displayName, role };
+}
+
+
 after(() => fs.rmSync(testDataDir, { recursive: true, force: true }));
 
 function providerConfig(overrides = {}) {
@@ -117,9 +130,8 @@ test('stale or missing title hashes are hidden across entry, asset, profile, and
   const oldTitle = 'Original Headline Before Refresh';
   const newTitle = 'Current Headline After Refresh';
   const staleTitleZh = '过期的中文标题';
-  const user = store.createUser({
+  const user = fixtureUser({
     email: 'title-gate@example.com',
-    password: 'test-password-123',
     displayName: '标题测试者',
   });
   store.upsertEntries([{

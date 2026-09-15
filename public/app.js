@@ -30,7 +30,7 @@ const DEFAULT_READER_OPEN_TAB = 'rewrite';
 const READER_OPEN_TABS = ['rewrite', 'original'];
 const ASSET_FILTER_TYPES = ['translation', 'rewrite', 'annotations', 'comments', 'chat'];
 const PROFILE_TAB_TYPES = [...ASSET_FILTER_TYPES, 'likes'];
-const DASHBOARD_TABS = ['profile', 'ai', 'contributions'];
+const DASHBOARD_TABS = ['profile', 'ai', 'contributions', 'sources'];
 const ASSET_FOCUS_LABELS = { translation: '中文翻译', rewrite: '中文改写', annotations: '划线点评', comments: '人工点评', chat: '文章对话' };
 const ANNOTATION_SURFACE_LABELS = { original: '原文', rewrite: '中文改写', translation: '中文翻译' };
 const ANNOTATION_SURFACES = Object.keys(ANNOTATION_SURFACE_LABELS);
@@ -608,6 +608,11 @@ function historyEntriesForStorage(map) {
 }
 
 const state = {
+  rssSources: [],
+  rssLoading: false,
+  rssBusy: false,
+  rssEditingId: null,
+  rssReplaceAdvanced: false,
   sources: [],
   entries: [],
   entryRenderLimit: ENTRY_RENDER_BATCH_SIZE,
@@ -633,12 +638,9 @@ const state = {
   sourceRefreshStatusTimer: null,
   autoRewrite: { running: false, last: null },
   activeEntry: null,
-  guestRead: new Set(readJson('fr_read', '[]')),
-  guestStarred: new Set(readJson('fr_starred', '[]')),
-  guestHistory: normalizeHistory(readJson('qm_history', '[]')),
-  read: new Set(readJson('fr_read', '[]')),
-  starred: new Set(readJson('fr_starred', '[]')),
-  history: normalizeHistory(readJson('qm_history', '[]')),
+  read: new Set(),
+  starred: new Set(),
+  history: new Map(),
   agentMessages: [],
   comments: [],
   annotations: [],
@@ -707,7 +709,7 @@ const state = {
   entryPaneWidth: readStoredNumber('qm_entry_pane_width'),
   contextPaneWidth: readStoredNumber('qm_context_pane_width'),
   me: null,
-  authMode: 'login',
+  identityStatus: 'loading',
   aiProfiles: [],
   activeAiProfileId: '',
   rewriteAiProfileId: '',
@@ -716,7 +718,6 @@ const state = {
   aiConfigReason: '',
   pendingAiAction: '',
   pendingAgentText: '',
-  pendingSubmitLink: null,
   articleLinkMenuUrl: '',
   articleLinkSubmitting: false,
   loadedAiScope: '',
@@ -1102,16 +1103,6 @@ function clearReaderUrl({ replace = true } = {}) {
   history[method]({ entryId: null }, '', url);
 }
 
-function persist() {
-  if (state.me) return;
-  state.guestRead = new Set(state.read);
-  state.guestStarred = new Set(state.starred);
-  state.guestHistory = new Map(state.history);
-  storage.setItem('fr_read', JSON.stringify([...state.guestRead].slice(-5000)));
-  storage.setItem('fr_starred', JSON.stringify([...state.guestStarred]));
-  storage.setItem('qm_history', JSON.stringify(historyEntriesForStorage(state.guestHistory)));
-}
-
 function toast(msg, ms = 2200) {
   const t = $('#toast');
   t.textContent = msg;
@@ -1450,7 +1441,7 @@ function friendlyDateTime(ts) {
 
 /* ---------- API ---------- */
 function aiScope() {
-  return state.me ? `user:${state.me.id || state.me.email}` : 'guest';
+  return state.me ? `user:${state.me.id || state.me.email}` : 'unavailable';
 }
 
 function aiProfilesKey(scope = aiScope()) {
@@ -1501,6 +1492,7 @@ function ensureSingleDefault(profiles) {
 }
 
 function loadAiProfilesForScope() {
+  if (!state.me) return;
   const scope = aiScope();
   const stored = readJson(aiProfilesKey(scope), 'null');
   let profiles = Array.isArray(stored) ? stored.map(normalizeProfile) : migrateLegacyAiProfiles();
@@ -1523,6 +1515,7 @@ function loadAiProfilesForScope() {
 }
 
 function persistAiProfiles() {
+  if (!state.me) return;
   const scope = aiScope();
   storage.setItem(aiProfilesKey(scope), JSON.stringify(ensureSingleDefault(state.aiProfiles)));
   if (state.activeAiProfileId) storage.setItem(aiActiveProfileKey(scope), state.activeAiProfileId);
@@ -1720,17 +1713,8 @@ async function loadContributors() {
   state.contributors = data.contributors || [];
 }
 
-function applyGuestEntryStates() {
-  state.read = new Set(state.guestRead);
-  state.starred = new Set(state.guestStarred);
-  state.history = new Map(state.guestHistory);
-}
-
 async function loadUserEntryStates() {
-  if (!state.me) {
-    applyGuestEntryStates();
-    return;
-  }
+  if (!state.me) throw new Error('个人身份尚未就绪');
   const data = await api('/api/me/entry-states');
   state.read = new Set((data.states && data.states.read) || []);
   state.starred = new Set((data.states && data.states.starred) || []);
@@ -1837,8 +1821,13 @@ function qScoreParts(entry) {
   return { ...q, parts };
 }
 
+function isEntrySourceEnabled(entry) {
+  const source = sourceById(entry.sourceId);
+  return Boolean(source && source.enabled && !source.deleted);
+}
+
 function hotEntryCount(entries = state.entries) {
-  return entries.filter(entry => entryQualityScore(entry) > 0.4).length;
+  return entries.filter(entry => isEntrySourceEnabled(entry) && entryQualityScore(entry) > 0.4).length;
 }
 
 function mergeEntryStats(entryId, stats = {}, { rerenderList = true } = {}) {
@@ -1873,7 +1862,7 @@ function renderReaderStatsUi() {
     likeBtn.setAttribute('aria-pressed', stats.reactionByMe === 'like' ? 'true' : 'false');
     likeBtn.setAttribute('aria-label', `${stats.reactionByMe === 'like' ? '取消点赞' : '点赞这篇文章'}，当前 ${formatCompactCount(stats.likeCount) || '0'} 个赞`);
     likeBtn.innerHTML = readerActionPillHtml('thumbs-up', formatCompactCount(stats.likeCount) || '0', '赞');
-    likeBtn.title = state.me ? '认可这篇文章' : '登录后可以点赞';
+    likeBtn.title = state.me ? '认可这篇文章' : '个人数据尚未就绪';
   }
   const railLike = $('#reader-rail-like');
   const railStar = $('#reader-rail-star');
@@ -1914,17 +1903,22 @@ function renderEntryStateUi() {
 }
 
 async function syncEntryState(entryId, patch) {
-  if (!state.me) {
-    persist();
-    return null;
-  }
+  if (!requirePersonalIdentity()) return null;
   try {
     const data = await api('/api/me/entry-state', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ entryId, ...patch }),
     });
+    if (patch.read !== undefined) patch.read ? state.read.add(entryId) : state.read.delete(entryId);
+    if (patch.starred !== undefined) patch.starred ? state.starred.add(entryId) : state.starred.delete(entryId);
+    if (patch.viewed) {
+      state.history.delete(entryId);
+      state.history.set(entryId, Date.now());
+      state.history = new Map(historyEntriesForStorage(state.history).map(item => [item.entryId, item.viewedAt]));
+    }
     if (data.stats) mergeEntryStats(entryId, data.stats);
+    renderEntryStateUi();
     return data;
   } catch (err) {
     toast('同步阅读状态失败: ' + err.message, 4000);
@@ -1933,24 +1927,22 @@ async function syncEntryState(entryId, patch) {
 }
 
 function recordEntryView(entryId) {
-  const id = String(entryId || '').trim();
-  if (!id) return;
-  state.history.delete(id);
-  state.history.set(id, Date.now());
-  state.history = new Map(historyEntriesForStorage(state.history).map(item => [item.entryId, item.viewedAt]));
-  api(`/api/entry/${encodeURIComponent(id)}/view`, { method: 'POST' })
+  if (!state.me || state.identityStatus !== 'ready') return;
+  api(`/api/entry/${encodeURIComponent(entryId)}/view`, { method: 'POST' })
     .then(data => {
-      if (data && data.stats) mergeEntryStats(id, data.stats);
+      if (data && data.stats) mergeEntryStats(entryId, data.stats);
     })
-    .catch(() => {});
+    .catch(err => toast('记录访问失败: ' + err.message, 4000));
 }
 
 async function loadMe() {
   const data = await api('/api/me');
-  setCurrentUser(data.user || null);
+  if (!data.user?.id) throw new Error('服务未返回个人身份');
+  setCurrentUser(data.user);
   await loadUserEntryStates();
+  state.identityStatus = 'ready';
   loadAiProfilesForScope();
-  renderAuthState();
+  renderPersonalIdentityState();
   renderEntryStateUi();
   renderComments();
   renderAgent();
@@ -1960,7 +1952,7 @@ async function loadMe() {
 
 /* ---------- Sidebar ---------- */
 function unreadCountFor(pred) {
-  return state.entries.filter(e => pred(e) && !state.read.has(e.id)).length;
+  return state.entries.filter(e => isEntrySourceEnabled(e) && pred(e) && !state.read.has(e.id)).length;
 }
 
 function renderSidebar() {
@@ -1992,7 +1984,7 @@ function renderSidebar() {
     }
   }
 
-  $('#count-all').textContent = state.entries.length || '';
+  $('#count-all').textContent = state.entries.filter(isEntrySourceEnabled).length || '';
   $('#count-hot').textContent = hotEntryCount() || '';
   $('#count-unread').textContent = unreadCountFor(() => true) || '';
   $('#count-starred').textContent = state.starred.size || '';
@@ -2049,7 +2041,7 @@ function isCompactViewport() {
 }
 
 function sourceNameForEntry(entry) {
-  return sourceById(entry && entry.sourceId)?.name || (entry && entry.sourceId) || '';
+  return sourceById(entry && entry.sourceId)?.name || (entry && (entry.sourceName || entry.sourceId)) || '';
 }
 
 function assetSearchText(entry) {
@@ -2119,7 +2111,7 @@ function visibleContributors() {
 }
 
 function visibleEntries() {
-  let list = state.entries;
+  let list = ['starred', 'history', 'assets'].includes(state.view) ? state.entries : state.entries.filter(isEntrySourceEnabled);
   if (state.view === 'hot') {
     list = list
       .slice()
@@ -2555,7 +2547,7 @@ function renderEntryPaneTabs() {
   tabs.classList.toggle('hidden', !show);
   if (!show) return;
   const assetCount = homeAssetActivityItems(1000).length;
-  const entryCount = state.entries.length;
+  const entryCount = state.entries.filter(isEntrySourceEnabled).length;
   $('#home-entry-count').textContent = entryCount;
   $('#home-asset-count').textContent = assetCount;
   $$('#entry-pane-tabs [data-home-tab]').forEach(btn => {
@@ -2618,7 +2610,7 @@ function assetActivityItemHtml({ entry, type, labels, preview, previewMeta }, { 
   const helpfulMeta = preview && Number(preview.helpfulCount || 0) > 0
     ? `有用 ${Number(preview.helpfulCount || 0)}`
     : '';
-  const meta = [src && src.name, previewMeta, helpfulMeta, formatAssetTime(entry.assets.latestAt)].filter(Boolean).join(' · ');
+  const meta = [sourceNameForEntry(entry), previewMeta, helpfulMeta, formatAssetTime(entry.assets.latestAt)].filter(Boolean).join(' · ');
   return `<button type="button" class="asset-activity-item${large ? ' asset-activity-item-large' : ''} asset-activity-${type}" data-asset-entry="${escapeHtml(entry.id)}" data-asset-focus="${escapeHtml(type)}"${itemId}>
     <span class="asset-activity-type">${escapeHtml(labelText)}</span>
     <strong>${escapeHtml(entry.titleZh || entry.title || '无标题')}</strong>
@@ -3014,7 +3006,7 @@ function renderArticleInfoPanel(entry = state.activeEntry) {
   body.innerHTML = `
     <div class="article-info-group">
       <span class="article-info-label">来源</span>
-      <div class="article-info-source">${src ? faviconHtml(src.siteUrl, src.name, 16) : ''}<strong>${escapeHtml(src ? src.name : entry.sourceId || '未知来源')}</strong></div>
+      <div class="article-info-source">${src ? faviconHtml(src.siteUrl, src.name, 16) : ''}<strong>${escapeHtml(sourceNameForEntry(entry) || '未知来源')}</strong></div>
       <div class="article-info-meta">${escapeHtml([entry.author, entry.published ? new Date(entry.published).toLocaleString('zh-CN') : ''].filter(Boolean).join(' · ') || '无时间信息')}</div>
     </div>
     <div class="article-info-grid">
@@ -3173,14 +3165,14 @@ function renderAdminEntryControls() {
   if (show) btn.title = '管理员：从前台隐藏这篇文章';
 }
 
-function renderAuthState() {
+function renderPersonalIdentityState() {
   const loggedIn = Boolean(state.me);
-  $('#auth-open')?.classList.toggle('hidden', loggedIn);
+  $('#identity-status').classList.toggle('hidden', loggedIn);
+  $('#identity-status').textContent = state.identityStatus === 'loading' ? '正在加载个人数据…' : '个人数据不可用，请重新加载';
   $('#account-info')?.classList.toggle('hidden', !loggedIn);
   $('#account-settings-open')?.classList.toggle('hidden', !loggedIn);
   if (!loggedIn) {
     setAccountMenuOpen(false);
-    closeChangePasswordModal();
   }
   if (loggedIn) {
     $('#account-info').innerHTML = `
@@ -3231,46 +3223,12 @@ function renderSidebarAiSettings() {
   const ready = loggedIn && hasUsableAiConfig(config);
   btn.title = loggedIn
     ? (ready ? `账户设置 · ${profile.name} · ${config.model}` : '账户设置')
-    : '登录后配置自己的 API Key';
+    : '个人数据尚未就绪';
 }
 
-function setAuthMode(mode) {
-  state.authMode = mode === 'register' ? 'register' : 'login';
-  $$('.auth-tab').forEach(btn => btn.classList.toggle('active', btn.dataset.mode === state.authMode));
-  $('#auth-title').textContent = state.authMode === 'register' ? '注册账号' : '登录';
-  $('#auth-submit').textContent = state.authMode === 'register' ? '注册并登录' : '登录';
-  $('#auth-name').classList.toggle('hidden', state.authMode !== 'register');
-  $('#auth-password').autocomplete = state.authMode === 'register' ? 'new-password' : 'current-password';
-}
-
-function openAuth(mode = 'login') {
-  setAuthMode(mode);
-  $('#auth-modal').classList.remove('hidden');
-  setTimeout(() => $('#auth-email').focus(), 30);
-}
-
-function closeAuth() {
-  $('#auth-modal').classList.add('hidden');
-}
-
-function openChangePasswordModal() {
-  if (!requireAuth('login')) return;
-  $('#change-password-current').value = '';
-  $('#change-password-new').value = '';
-  $('#change-password-confirm').value = '';
-  $('#change-password-submit').disabled = false;
-  $('#change-password-submit').textContent = '保存新密码';
-  $('#change-password-modal').classList.remove('hidden');
-  setTimeout(() => $('#change-password-current').focus(), 30);
-}
-
-function closeChangePasswordModal() {
-  $('#change-password-modal').classList.add('hidden');
-}
-
-function requireAuth(mode = 'login') {
-  if (state.me) return true;
-  openAuth(mode);
+function requirePersonalIdentity() {
+  if (state.me && state.identityStatus === 'ready') return true;
+  toast(state.identityStatus === 'loading' ? '正在加载个人数据，请稍候' : '个人数据加载失败，请重新加载页面', 4000);
   return false;
 }
 
@@ -3280,9 +3238,8 @@ function openSubmitLinkModal(prefill = {}) {
     note: String(prefill.note || '').trim(),
   };
   if (!state.me) {
-    state.pendingSubmitLink = next;
-    openAuth('login');
-    toast('注册或登录后才能提交链接');
+    requirePersonalIdentity();
+    toast('个人数据尚未就绪，暂时无法提交链接');
     return false;
   }
   $('#submit-link-url').value = next.url || '';
@@ -3299,7 +3256,7 @@ function closeSubmitLinkModal() {
 }
 
 async function submitReaderLink() {
-  if (!requireAuth('login')) return;
+  if (!requirePersonalIdentity()) return;
   const url = $('#submit-link-url').value.trim();
   const note = $('#submit-link-note').value.trim();
   if (!url) {
@@ -3323,94 +3280,6 @@ async function submitReaderLink() {
     btn.disabled = false;
     btn.textContent = '提交';
   }
-}
-
-async function submitAuth() {
-  const email = $('#auth-email').value.trim();
-  const password = $('#auth-password').value;
-  const displayName = $('#auth-name').value.trim();
-  $('#auth-submit').disabled = true;
-  try {
-    const data = await api(state.authMode === 'register' ? '/api/auth/register' : '/api/auth/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password, displayName }),
-    });
-    setCurrentUser(data.user || null);
-    closeAuth();
-    await loadUserEntryStates();
-    loadAiProfilesForScope();
-    renderAuthState();
-    renderEntryStateUi();
-    renderComments();
-    renderAgent();
-    renderAiSettings();
-    const route = routeStateFromUrl();
-    if (route.dashboard) await openMyCommentsModal({ push: false, tab: route.dashboardTab });
-    if (state.pendingSubmitLink) {
-      const pending = state.pendingSubmitLink;
-      state.pendingSubmitLink = null;
-      openSubmitLinkModal(pending);
-    }
-    toast(state.authMode === 'register' ? '注册成功' : '已登录');
-  } catch (err) {
-    toast(err.message, 5000);
-  } finally {
-    $('#auth-submit').disabled = false;
-  }
-}
-
-async function submitChangePassword() {
-  if (!requireAuth('login')) return;
-  const currentPassword = $('#change-password-current').value;
-  const newPassword = $('#change-password-new').value;
-  const confirmPassword = $('#change-password-confirm').value;
-  if (!currentPassword || !newPassword || !confirmPassword) {
-    toast('请填写完整密码信息');
-    return;
-  }
-  if (newPassword !== confirmPassword) {
-    toast('两次输入的新密码不一致');
-    return;
-  }
-  const btn = $('#change-password-submit');
-  btn.disabled = true;
-  btn.textContent = '保存中…';
-  try {
-    const data = await api('/api/me/password', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ currentPassword, newPassword }),
-    });
-    if (data.user) setCurrentUser(data.user);
-    closeChangePasswordModal();
-    renderAuthState();
-    toast('密码已修改');
-  } catch (err) {
-    toast('修改失败: ' + err.message, 5000);
-  } finally {
-    btn.disabled = false;
-    btn.textContent = '保存新密码';
-  }
-}
-
-async function logout() {
-  await api('/api/auth/logout', { method: 'POST' }).catch(() => null);
-  const wasDashboardOpen = state.workspacePage === 'dashboard' || state.workspacePage === 'admin';
-  setCurrentUser(null);
-  state.myComments = [];
-  state.myChatMessages = [];
-  setAccountMenuOpen(false);
-  closeChangePasswordModal();
-  if (wasDashboardOpen) closeMyCommentsModal();
-  applyGuestEntryStates();
-  loadAiProfilesForScope();
-  renderAuthState();
-  renderEntryStateUi();
-  renderComments();
-  renderAgent();
-  renderAiSettings();
-  toast('已退出登录');
 }
 
 function renderContributorDirectory() {
@@ -3514,7 +3383,7 @@ function renderList() {
     const assetPreview = assetPreviewForEntry(e);
     const assetItems = assetItemListHtml(e);
     const publishedLabel = timeAgo(e.publishedTs);
-    const sourceName = src ? src.name : e.sourceId;
+    const sourceName = sourceNameForEntry(e);
     const card = document.createElement('div');
     card.className = 'entry-card' + (state.read.has(e.id) ? ' read' : '') + (state.activeEntry?.id === e.id ? ' active' : '');
     card.dataset.id = e.id;
@@ -4290,7 +4159,7 @@ function personaParseSseEvent(data) {
 async function personaCustomFetch(_url, init = {}, payload = {}) {
   const entry = state.activeEntry;
   if (!entry || !entry.id) throw new Error('请先选择一篇文章');
-  if (!state.me) throw new Error('请先登录或注册账号');
+  if (!state.me) throw new Error('个人数据尚未就绪');
   const agentConfig = aiConfigForPurpose('agent');
   if (!hasUsableAiConfig(agentConfig)) throw new Error('请先保存一个可用的 AI 配置');
   return fetch(`/api/entry/${encodeURIComponent(entry.id)}/chat/stream`, {
@@ -4675,7 +4544,7 @@ function refreshPersonaAgent() {
 function submitPersonaAgentMessage(text) {
   const content = String(text || '').trim();
   if (!content || !personaAgentActive()) return false;
-  if (!requireAuth('login')) return true;
+  if (!requirePersonalIdentity()) return true;
   const agentConfig = aiConfigForPurpose('agent');
   if (!hasUsableAiConfig(agentConfig)) {
     openAiConfigModal('agent', 'agent', content);
@@ -5242,7 +5111,7 @@ async function toggleEntryAssetHelpful(type) {
   const entry = state.activeEntry;
   const asset = type === 'translation' ? state.translation : type === 'rewrite' ? state.rewrite : null;
   if (!entry || !entryAssetHasContent(type, asset)) return;
-  if (!requireAuth('login')) return;
+  if (!requirePersonalIdentity()) return;
   const btn = $(`#${type}-helpful`);
   const nextHelpful = !asset.helpfulByMe;
   const assetId = String(asset.id || state.readerAssetId || '').trim();
@@ -5283,7 +5152,7 @@ async function generateTranslation({ force = false } = {}) {
     return;
   }
   if (state.translationGenerating) return;
-  if (!requireAuth('login')) return;
+  if (!requirePersonalIdentity()) return;
   state.readerAssetId = '';
   setReaderTab('translation');
   state.translationGenerating = true;
@@ -5327,7 +5196,7 @@ async function generateRewrite({ force = false } = {}) {
     return;
   }
   if (state.rewriteGenerating) return;
-  if (!requireAuth('login')) return;
+  if (!requirePersonalIdentity()) return;
   state.readerAssetId = '';
   setReaderTab('rewrite');
   state.rewriteGenerating = true;
@@ -5850,7 +5719,7 @@ function renderAnnotationItem(item, { side = false, margin = false } = {}) {
           </form>
         ` : `
           <div class="annotation-reply-actions">
-            <button type="button" class="annotation-action" data-annotation-login="1">登录后回复</button>
+            <span class="annotation-action">个人数据尚未就绪</span>
           </div>
         `}
       </article>`;
@@ -6061,7 +5930,7 @@ async function submitAnnotationDraft() {
   const draft = state.annotationDraft;
   const body = $('#annotation-popover-input').value.trim();
   if (!entry || !draft) return;
-  if (!requireAuth('login')) return;
+  if (!requirePersonalIdentity()) return;
   const btn = $('#annotation-popover-submit');
   btn.disabled = true;
   state.annotationBusy = true;
@@ -6100,7 +5969,7 @@ async function submitAnnotationReply(annotationId, form) {
   const input = form && $('textarea', form);
   const body = input ? input.value.trim() : '';
   if (!entry || !annotationId || !body) return;
-  if (!requireAuth('login')) return;
+  if (!requirePersonalIdentity()) return;
   const btn = $('button', form);
   if (btn) btn.disabled = true;
   try {
@@ -6126,8 +5995,8 @@ async function toggleAnnotationHelpful(annotationId) {
   const item = (state.annotations || []).find(annotation => annotation.id === annotationId);
   if (!entry || !item) return;
   if (!state.me) {
-    openAuth('login');
-    toast('登录后可以标记有用');
+    requirePersonalIdentity();
+    toast('个人数据尚未就绪');
     return;
   }
   const nextHelpful = !item.helpfulByMe;
@@ -6384,6 +6253,171 @@ function mountAiConfigPanel(target = 'modal') {
   mount.appendChild(content);
 }
 
+function rssFeedsAreAdvanced(source) {
+  return (source.feeds || []).some(feed => typeof feed !== 'string' || !/^https?:\/\//i.test(feed) || /\{rsshub\}/i.test(feed));
+}
+
+function setRssBusy(busy) {
+  state.rssBusy = busy;
+  $$('#dashboard-sources-panel button, #dashboard-sources-panel input, #dashboard-sources-panel select, #dashboard-sources-panel textarea').forEach(node => { node.disabled = busy; });
+}
+
+function rssFetchStatus(source) {
+  if (source.deleted || !source.enabled) return '已停止抓取';
+  if (source.error || source.status === 'error') return '抓取失败' + (source.error ? '：' + source.error : '');
+  if (source.status === 'fetching' || source.status === 'refreshing') return '正在抓取…';
+  if (source.status === 'pending' || !source.fetchedAt) return '等待首次抓取（已保存订阅）';
+  return '最近抓取：' + friendlyDateTime(Number(source.fetchedAt) || Date.parse(source.fetchedAt));
+}
+
+function renderRssSources() {
+  const rows = sources => sources.map(source => {
+    const id = escapeHtml(source.id);
+    const feeds = (source.feeds || []).map(feed => typeof feed === 'string' ? feed : JSON.stringify(feed));
+    return `<article class="rss-source-card"><div class="rss-source-info"><strong>${escapeHtml(source.name)}</strong>
+      <span class="rss-source-meta">${escapeHtml(CATEGORY_LABELS[source.category] || source.category || '文章')} · ${source.deleted ? '已删除' : source.enabled ? '已启用' : '已停用'} · ${Number(source.entryCount) || 0} 篇文章</span>
+      <div class="rss-source-url">${feeds.map(escapeHtml).join('<br>')}</div>
+      <p class="rss-source-error">${escapeHtml(rssFetchStatus(source))}</p></div>
+      <div class="rss-actions">${source.deleted
+        ? `<button type="button" class="ghost-btn" data-rss-action="restore" data-rss-id="${id}">恢复</button>`
+        : `<button type="button" class="ghost-btn" data-rss-action="edit" data-rss-id="${id}">编辑</button><button type="button" class="ghost-btn" data-rss-action="toggle" data-rss-id="${id}">${source.enabled ? '停用' : '启用'}</button><button type="button" class="ghost-btn" data-rss-action="delete" data-rss-id="${id}">删除</button>`}</div></article>`;
+  }).join('') || '<p class="rss-empty">暂无订阅源</p>';
+  $('#rss-source-list').innerHTML = rows(state.rssSources.filter(source => !source.deleted));
+  $('#rss-deleted-list').innerHTML = rows(state.rssSources.filter(source => source.deleted));
+  $('#rss-deleted-count').textContent = state.rssSources.filter(source => source.deleted).length;
+  if (state.rssBusy) setRssBusy(true);
+}
+
+async function loadRssSources({ propagateError = false } = {}) {
+  if (!state.me || state.rssLoading) return;
+  state.rssLoading = true;
+  $('#rss-status').textContent = '正在加载订阅源…';
+  try {
+    const data = await api('/api/me/sources');
+    state.rssSources = data.sources || [];
+    renderRssSources();
+    $('#rss-status').textContent = `共 ${state.rssSources.filter(source => !source.deleted).length} 个订阅源`;
+  } catch (err) {
+    $('#rss-status').textContent = `加载失败：${err.message}。当前列表可能不是最新，可点击重新加载重试。`;
+    if (propagateError) throw err;
+  } finally { state.rssLoading = false; }
+}
+
+function resetRssEditor() {
+  state.rssEditingId = null;
+  state.rssReplaceAdvanced = false;
+  $('#rss-source-form').reset();
+  $('#rss-feeds').readOnly = false;
+  $('#rss-advanced-note').classList.add('hidden');
+  $('#rss-editor-title').textContent = '添加订阅源';
+  $('#rss-save').textContent = '添加订阅';
+  $('#rss-cancel').textContent = '清空';
+}
+
+function editRssSource(source) {
+  state.rssEditingId = source.id;
+  state.rssReplaceAdvanced = false;
+  $('#rss-use-standard').classList.remove('hidden');
+  $('#rss-advanced-description').textContent = '此源包含高级抓取配置，默认保留。改用标准 RSS 后，保存会替换原配置及备用抓取方式。';
+  $('#rss-name').value = source.name;
+  $('#rss-category').value = source.category || 'article';
+  $('#rss-feeds').value = (source.feeds || []).map(feed => typeof feed === 'string' ? feed : JSON.stringify(feed)).join('\n');
+  $('#rss-feeds').readOnly = rssFeedsAreAdvanced(source);
+  $('#rss-advanced-note').classList.toggle('hidden', !rssFeedsAreAdvanced(source));
+  $('#rss-editor-title').textContent = '编辑订阅源';
+  $('#rss-save').textContent = '保存修改';
+  $('#rss-cancel').textContent = '取消编辑';
+  $('#rss-editor-details').open = true;
+  $('#rss-name').focus();
+}
+
+function useStandardRssFeeds() {
+  const source = state.rssSources.find(item => item.id === state.rssEditingId);
+  if (!source || state.rssBusy || !rssFeedsAreAdvanced(source)) return;
+  state.rssReplaceAdvanced = true;
+  $('#rss-feeds').readOnly = false;
+  $('#rss-feeds').value = (source.feeds || []).filter(feed => typeof feed === 'string' && /^https?:\/\//i.test(feed) && !/\{rsshub\}/i.test(feed)).join('\n');
+  $('#rss-use-standard').classList.add('hidden');
+  $('#rss-advanced-description').textContent = '保存后将使用下方 RSS 地址，替换原高级配置及备用抓取方式。取消编辑可保留原配置。';
+  $('#rss-feeds').focus();
+}
+
+async function refreshAfterRssMutation() {
+  await loadRssSources({ propagateError: true });
+  await loadSources();
+  if (state.filterSource && !state.sources.some(source => source.id === state.filterSource && source.enabled && !source.deleted)) state.filterSource = null;
+  await loadEntries();
+  renderSidebar();
+  updateListTitle();
+  renderList();
+  if (state.activeEntry) {
+    const source = sourceById(state.activeEntry.sourceId);
+    $('#reader-source').innerHTML = `${source ? faviconHtml(source.siteUrl, source.name, 14) : ''}<span>${escapeHtml(sourceNameForEntry(state.activeEntry))}</span>`;
+  }
+}
+
+async function mutateRssSource(operation, successMessage, onSuccess) {
+  if (state.rssBusy) return;
+  if (!state.me) { requirePersonalIdentity(); return; }
+  setRssBusy(true);
+  let saved = false;
+  try {
+    const result = await operation();
+    saved = true;
+    if (onSuccess) onSuccess(result);
+    await refreshAfterRssMutation();
+    $('#rss-status').textContent = successMessage;
+  } catch (err) {
+    $('#rss-status').textContent = saved ? `操作已保存，但刷新失败：${err.message}。请重新加载页面。` : `操作失败：${err.message}`;
+  } finally { setRssBusy(false); }
+}
+
+async function submitRssSource(event) {
+  event.preventDefault();
+  const editing = state.rssSources.find(source => source.id === state.rssEditingId);
+  const payload = { name: $('#rss-name').value.trim(), category: $('#rss-category').value };
+  if (!editing || !rssFeedsAreAdvanced(editing) || state.rssReplaceAdvanced) payload.feeds = $('#rss-feeds').value.split(/\r?\n/).map(value => value.trim()).filter(Boolean);
+  if (!payload.name || (payload.feeds && !payload.feeds.length)) { $('#rss-status').textContent = '请填写名称和 RSS 地址。'; return; }
+  const endpoint = '/api/me/sources' + (editing ? '/' + encodeURIComponent(editing.id) : '');
+  await mutateRssSource(() => api(endpoint, { method: editing ? 'PATCH' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }), editing ? '订阅源已保存' : '订阅源已添加', resetRssEditor);
+}
+
+async function handleRssAction(event) {
+  const button = event.target.closest('[data-rss-action]');
+  if (!button || state.rssBusy) return;
+  const source = state.rssSources.find(item => item.id === button.dataset.rssId);
+  if (!source) return;
+  const action = button.dataset.rssAction;
+  if (action === 'edit') { editRssSource(source); return; }
+  if (action === 'delete' && !confirm(`删除“${source.name}”？将停止抓取并从订阅列表隐藏，已有文章、收藏和阅读历史都会保留。之后可以在“已删除的订阅源”中恢复。`)) return;
+  const payload = action === 'restore' ? { deleted: false, enabled: true } : { enabled: !source.enabled };
+  await mutateRssSource(() => api('/api/me/sources/' + encodeURIComponent(source.id), { method: action === 'delete' ? 'DELETE' : 'PATCH', headers: { 'Content-Type': 'application/json' }, ...(action === 'delete' ? {} : { body: JSON.stringify(payload) }) }), action === 'delete' ? '订阅源已删除，阅读数据已保留' : action === 'restore' ? '订阅源已恢复并启用' : '订阅状态已更新', () => { if (state.rssEditingId === source.id && action === 'delete') resetRssEditor(); });
+}
+
+function renderRssImportResult(result) {
+  const statuses = { added: '已添加', skipped: '已跳过', failed: '失败' };
+  $('#rss-import-results').innerHTML = `<p>添加 ${Number(result.added) || 0} · 跳过 ${Number(result.skipped) || 0} · 失败 ${Number(result.failed) || 0}</p><ul class="rss-import-items">${(result.results || []).map(item => `<li><strong>${escapeHtml(statuses[item.status] || item.status)}</strong> ${escapeHtml(item.name || '')}<span>${escapeHtml(item.url || '')}</span>${item.message ? `<span>${escapeHtml(item.message)}</span>` : ''}</li>`).join('')}</ul>`;
+}
+
+async function submitRssImport(event) {
+  event.preventDefault();
+  if (state.rssBusy) return;
+  const format = $('#rss-import-format').value;
+  let content;
+  try {
+    if (format === 'opml') {
+      const file = $('#rss-import-file').files[0];
+      if (!file) throw new Error('请选择 OPML 文件');
+      if (file.size > 1024 * 1024) throw new Error('文件不能超过 1 MB');
+      content = await file.text();
+    } else content = $('#rss-import-urls').value.trim();
+    if (!content.trim()) throw new Error('请输入需要导入的内容');
+    if (new TextEncoder().encode(content).length > 1024 * 1024) throw new Error('导入内容不能超过 1 MB');
+    if (format === 'urls' && content.split(/\r?\n/).filter(line => line.trim()).length > 200) throw new Error('每次最多导入 200 个订阅');
+  } catch (err) { $('#rss-status').textContent = err.message; return; }
+  await mutateRssSource(() => api('/api/me/sources/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ format, content }) }), '导入完成，请查看逐项结果', renderRssImportResult);
+}
+
 function renderDashboardTabs() {
   const tab = normalizeDashboardTab(state.dashboardTab);
   $$('#my-dashboard-page [data-dashboard-tab]').forEach(btn => {
@@ -6394,6 +6428,8 @@ function renderDashboardTabs() {
   $('#dashboard-profile-panel')?.classList.toggle('hidden', tab !== 'profile');
   $('#dashboard-ai-panel')?.classList.toggle('hidden', tab !== 'ai');
   $('#dashboard-contributions-panel')?.classList.toggle('hidden', tab !== 'contributions');
+  $('#dashboard-sources-panel')?.classList.toggle('hidden', tab !== 'sources');
+  if (tab === 'sources') loadRssSources();
   if (tab === 'ai') {
     mountAiConfigPanel('dashboard');
     renderAiSettings();
@@ -6499,7 +6535,7 @@ async function loadNotifications() {
     state.notifications = data.notifications || [];
     setCurrentUser({ ...state.me, notificationUnreadCount: Number(data.unreadCount) || 0 }, { resetProfileDraft: false });
     renderNotifications();
-    renderAuthState();
+    renderPersonalIdentityState();
   } catch (err) {
     state.notifications = [];
     renderNotifications();
@@ -6514,7 +6550,7 @@ async function markMyNotificationsRead() {
     if (data.user) setCurrentUser(data.user, { resetProfileDraft: false });
     state.notifications = (state.notifications || []).map(item => ({ ...item, read: true }));
     renderNotifications();
-    renderAuthState();
+    renderPersonalIdentityState();
     toast('通知已标记为已读');
   } catch (err) {
     toast('更新通知失败: ' + err.message, 4000);
@@ -6540,7 +6576,7 @@ async function saveProfile() {
       body: JSON.stringify(payload),
     });
     if (data.user) setCurrentUser(data.user);
-    renderAuthState();
+    renderPersonalIdentityState();
     renderProfileEditor();
     renderMyPublicProfileActions();
     toast('个人资料已保存');
@@ -6620,7 +6656,7 @@ function renderMyAssets() {
 
 async function openMyCommentsModal({ push = true, tab = state.dashboardTab } = {}) {
   if (!state.me) {
-    openAuth('login');
+    requirePersonalIdentity();
     return false;
   }
   setWorkspacePage('dashboard');
@@ -7181,8 +7217,8 @@ async function toggleCommentHelpful(commentId) {
   const comment = (state.comments || []).find(item => item.id === commentId);
   if (!entry || !commentId || !comment) return;
   if (!state.me) {
-    openAuth('login');
-    toast('登录后可以标记有用');
+    requirePersonalIdentity();
+    toast('个人数据尚未就绪');
     return;
   }
   const nextHelpful = !comment.helpfulByMe;
@@ -7281,7 +7317,7 @@ async function submitComment() {
   const entry = state.activeEntry;
   const body = $('#comment-input').value.trim();
   if (!entry || !body) return;
-  if (!requireAuth('login')) return;
+  if (!requirePersonalIdentity()) return;
   $('#comment-send').disabled = true;
   try {
     const data = await api(`/api/entry/${entry.id}/comments`, {
@@ -7443,8 +7479,8 @@ function copyAgentMessageLink(messageId) {
 function draftCommentFromAgentMessage(message) {
   if (!state.activeEntry || !message || !String(message.content || '').trim()) return;
   if (!state.me) {
-    openAuth('login');
-    toast('登录后可放入点评草稿');
+    requirePersonalIdentity();
+    toast('个人数据尚未就绪');
     return;
   }
   const input = $('#comment-input');
@@ -7484,7 +7520,7 @@ async function toggleAgentHelpful(messageId) {
   const entry = state.activeEntry;
   const message = (state.agentMessages || []).find(item => item.id === messageId);
   if (!entry || !message) return;
-  if (!requireAuth('login')) return;
+  if (!requirePersonalIdentity()) return;
   const nextHelpful = !message.helpfulByMe;
   try {
     const data = await api(`/api/entry/${entry.id}/chat/${encodeURIComponent(messageId)}/helpful`, {
@@ -7563,7 +7599,7 @@ function updateAgentControls() {
   const panel = $('#agent-side-panel');
   if (!input || !send) return;
   if (!hasEntry) input.placeholder = '问当前文章…';
-  else if (!hasUser) input.placeholder = '登录后围绕当前文章对话';
+  else if (!hasUser) input.placeholder = '个人数据尚未就绪';
   else if (!hasKey) input.placeholder = '填写 API Key 后提问';
   else input.placeholder = '问当前文章…';
   input.disabled = !hasEntry || !hasUser || !hasKey || state.agentBusy;
@@ -7616,7 +7652,7 @@ async function sendAgentMessage(text) {
   const content = String(text || '').trim();
   if (!entry || !content || state.agentBusy) return;
   if (submitPersonaAgentMessage(content)) return;
-  if (!requireAuth('login')) return;
+  if (!requirePersonalIdentity()) return;
   const agentConfig = aiConfigForPurpose('agent');
   if (!hasUsableAiConfig(agentConfig)) {
     openAiConfigModal('agent', 'agent', content);
@@ -7670,16 +7706,14 @@ async function openEntry(e, { tab = null, focus = null, aiAssetId = '', commentI
     : requestedFocus === 'rewrite'
       ? 'rewrite'
       : normalizeReaderOpenTab(tab);
-  state.read.add(e.id);
   recordEntryView(e.id);
   syncEntryState(e.id, { read: true, viewed: true });
-  persist();
 
   const src = sourceById(e.sourceId);
   $('#reader-empty').classList.add('hidden');
   $('#reader').classList.remove('hidden');
   renderAdminEntryControls();
-  $('#reader-source').innerHTML = `${src ? faviconHtml(src.siteUrl, src.name, 14) : ''}<span>${escapeHtml(src ? src.name : '')}</span>`;
+  $('#reader-source').innerHTML = `${src ? faviconHtml(src.siteUrl, src.name, 14) : ''}<span>${escapeHtml(sourceNameForEntry(e))}</span>`;
   renderTitle(e);
   updateRewriteUiLabels(e);
   document.title = readerRouteTitle(e, requestedFocus);
@@ -8078,7 +8112,7 @@ async function refreshAll() {
 async function refreshCurrentSource() {
   const source = state.filterSource ? sourceById(state.filterSource) : null;
   if (!source) return;
-  if (!requireAuth('login')) return;
+  if (!requirePersonalIdentity()) return;
 
   const btn = $('#source-refresh-btn');
   btn.disabled = true;
@@ -8122,7 +8156,7 @@ async function refreshCurrentSource() {
 /* ---------- Manage modal ---------- */
 function sourceName(id) {
   const source = state.sources.find(item => item.id === id);
-  return source ? source.name : id;
+  return source ? source.name : (state.entries.find(entry => entry.sourceId === id)?.sourceName || id);
 }
 
 function manageStatusLine() {
@@ -8311,7 +8345,7 @@ function renderAdminSubmissionRequests() {
   el.innerHTML = requests.length ? requests.map(request => `
     <article class="admin-review-item" role="listitem" data-submission-request-id="${escapeHtml(request.id)}">
       <div class="admin-review-copy">
-        <strong>${escapeHtml(request.displayName || request.author || request.email || '注册用户')}</strong>
+        <strong>${escapeHtml(request.displayName || request.author || request.email || '读者')}</strong>
         <span>${escapeHtml(request.email || '')} · ${escapeHtml(formatAssetTime(request.createdAt))}</span>
         <a href="${escapeHtml(request.url)}" target="_blank" rel="noopener noreferrer nofollow">${escapeHtml(request.url)}</a>
         ${request.note ? `<p>${escapeHtml(request.note)}</p>` : ''}
@@ -8408,7 +8442,7 @@ function renderAdminSubmissionManager() {
   detailEl.innerHTML = `
     <div class="admin-user-detail-head">
       <div>
-        <span class="admin-detail-kicker">${user.disabled ? '已封禁用户' : user.role === 'admin' ? '管理员账号' : '注册用户'}</span>
+        <span class="admin-detail-kicker">${user.disabled ? '已封禁用户' : user.role === 'admin' ? '管理员账号' : '读者'}</span>
         <h3>${escapeHtml(user.displayName || '未命名用户')}</h3>
         <p>${escapeHtml(user.email || '')}</p>
       </div>
@@ -8517,7 +8551,7 @@ async function deleteAdminUser() {
   if (!user || user.role === 'admin' || user.userId === state.me?.id) return;
   const ok = await showConfirmDialog({
     title: '删除违规用户',
-    message: `确认停用「${user.displayName || user.email}」？系统会立即撤销其登录会话、禁止再次登录，并隐藏全部读者投稿。审计记录会保留。`,
+    message: `确认停用「${user.displayName || user.email}」？系统会停用该用户，并隐藏全部读者投稿。审计记录会保留。`,
     confirmText: '删除违规用户',
     danger: true,
   });
@@ -8536,7 +8570,7 @@ async function restoreAdminUser() {
   if (!user || !user.disabled || user.role === 'admin') return;
   const ok = await showConfirmDialog({
     title: '恢复用户账号',
-    message: `恢复「${user.displayName || user.email}」登录权限？此前清理的投稿不会自动恢复。`,
+    message: `恢复「${user.displayName || user.email}」使用权限？此前清理的投稿不会自动恢复。`,
     confirmText: '恢复账号',
   });
   if (!ok) return;
@@ -8547,7 +8581,7 @@ async function restoreAdminUser() {
 
 async function openAdminPage({ push = true } = {}) {
   if (!isAdmin()) {
-    if (!state.me) openAuth('login');
+    if (!state.me) requirePersonalIdentity();
     else toast('需要管理员权限');
     return false;
   }
@@ -8578,7 +8612,7 @@ function renderAiStatus() {
   renderAiProfileControls();
   if (!el) return;
   if (!state.me) {
-    el.textContent = '登录后配置模型';
+    el.textContent = '个人数据尚未就绪';
     return;
   }
   const profile = aiProfileForPurpose('agent');
@@ -8838,8 +8872,8 @@ async function deleteAiProfile() {
 }
 
 function openAiConfigModal(reason = '', pendingAction = '', pendingText = '') {
-  if (!requireAuth('login')) {
-    toast('登录后可以配置自己的 API Key');
+  if (!requirePersonalIdentity()) {
+    toast('个人数据尚未就绪');
     return false;
   }
   state.aiConfigReason = reason;
@@ -8866,7 +8900,7 @@ function closeAiConfigModal() {
 }
 
 async function fetchAiModels() {
-  if (!requireAuth('login')) return;
+  if (!requirePersonalIdentity()) return;
   const profile = readAiProfileForm();
   const config = configFromProfile(profile);
   if (!config.apiKey || !config.baseUrl) {
@@ -8902,7 +8936,7 @@ async function fetchAiModels() {
 }
 
 async function testAiConnection() {
-  if (!requireAuth('login')) return;
+  if (!requirePersonalIdentity()) return;
   const profile = readAiProfileForm();
   const config = configFromProfile(profile);
   if (!hasUsableAiConfig(config)) {
@@ -9343,37 +9377,36 @@ $('#reader-pane').addEventListener('click', (e) => {
 $('#article-link-open').onclick = openArticleLinkInWindow;
 $('#article-link-submit').onclick = submitArticleLinkToSite;
 $('#mark-read-btn').onclick = async () => {
+  if (!requirePersonalIdentity()) return;
   const ids = visibleEntries().map(e => e.id);
-  ids.forEach(id => state.read.add(id));
-  persist();
-  renderEntryStateUi();
-  if (state.me && ids.length) {
-    try {
-      await api('/api/me/entry-states/read', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ entryIds: ids }),
-      });
-    } catch (err) {
-      toast('同步已读失败: ' + err.message, 4000);
-      return;
-    }
+  try {
+    if (ids.length) await api('/api/me/entry-states/read', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ entryIds: ids }),
+    });
+    ids.forEach(id => state.read.add(id));
+    renderEntryStateUi();
+    toast('已全部标为已读');
+  } catch (err) {
+    toast('同步已读失败: ' + err.message, 4000);
   }
-  toast('已全部标为已读');
 };
-$('#reader-star').onclick = () => {
+$('#reader-star').onclick = async () => {
   const e = state.activeEntry;
-  if (!e) return;
-  const nextStarred = !state.starred.has(e.id);
-  nextStarred ? state.starred.add(e.id) : state.starred.delete(e.id);
-  persist();
-  renderEntryStateUi();
-  syncEntryState(e.id, { starred: nextStarred });
+  const button = $('#reader-star');
+  if (!e || button.disabled || !requirePersonalIdentity()) return;
+  button.disabled = true;
+  try {
+    await syncEntryState(e.id, { starred: !state.starred.has(e.id) });
+  } finally {
+    button.disabled = false;
+  }
 };
 async function setReaderReaction(reaction) {
   const entry = state.activeEntry;
   if (!entry) return;
-  if (!requireAuth('login')) return;
+  if (!requirePersonalIdentity()) return;
   const stats = entryStats(entry);
   const next = stats.reactionByMe === reaction ? '' : reaction;
   try {
@@ -9416,7 +9449,6 @@ async function deleteCurrentEntry() {
     state.read.delete(entry.id);
     state.starred.delete(entry.id);
     state.history.delete(entry.id);
-    persist();
     await Promise.all([loadSources(), loadEntries(), loadContributors()]);
     closeReaderFromRoute();
     updateListTitle();
@@ -9561,10 +9593,7 @@ function handleAnnotationListClick(e) {
     openContributor(contributor.dataset.contributorId);
     return;
   }
-  if (e.target.closest('[data-annotation-login]')) {
-    openAuth('login');
-    return;
-  }
+
   const helpful = e.target.closest('[data-annotation-helpful]');
   if (helpful) {
     toggleAnnotationHelpful(helpful.dataset.annotationHelpful);
@@ -9726,7 +9755,6 @@ $('#comments-list').onkeydown = (e) => {
 $$('.comment-sort-btn').forEach(btn => {
   btn.onclick = () => setCommentSort(btn.dataset.commentSort);
 });
-$('#comment-login').onclick = () => openAuth('login');
 $('#agent-form').onsubmit = (e) => {
   e.preventDefault();
   sendAgentMessage($('#agent-input').value);
@@ -9771,11 +9799,6 @@ $('#account-menu-admin').onclick = () => {
   setAccountMenuOpen(false);
   openAdminPage();
 };
-$('#account-menu-password').onclick = () => {
-  setAccountMenuOpen(false);
-  openChangePasswordModal();
-};
-$('#account-menu-logout').onclick = () => logout();
 $('#my-comments-close').onclick = closeMyCommentsModal;
 $('#profile-save').onclick = saveProfile;
 $('#notifications-read').onclick = markMyNotificationsRead;
@@ -9847,6 +9870,18 @@ $$('#my-dashboard-page [data-my-asset-sort]').forEach(btn => {
     renderMyAssets();
   };
 });
+$('#rss-source-form').onsubmit = submitRssSource;
+$('#rss-import-form').onsubmit = submitRssImport;
+$('#rss-cancel').onclick = resetRssEditor;
+$('#rss-use-standard').onclick = useStandardRssFeeds;
+$('#rss-reload').onclick = loadRssSources;
+$('#rss-source-list').onclick = handleRssAction;
+$('#rss-deleted-list').onclick = handleRssAction;
+$('#rss-import-format').onchange = () => {
+  const opml = $('#rss-import-format').value === 'opml';
+  $('#rss-file-label').classList.toggle('hidden', !opml);
+  $('#rss-urls-label').classList.toggle('hidden', opml);
+};
 $$('#my-dashboard-page [data-dashboard-tab]').forEach(btn => {
   btn.onclick = () => setDashboardTab(btn.dataset.dashboardTab, { push: true });
 });
@@ -9969,20 +10004,6 @@ $('#reader-font-family').onchange = (e) => setReaderPref('font', e.target.value)
 $('#manage-btn').onclick = () => { renderManage(); $('#manage-modal').classList.remove('hidden'); };
 $('#manage-close').onclick = () => $('#manage-modal').classList.add('hidden');
 $('#manage-modal').onclick = (e) => { if (e.target.id === 'manage-modal') $('#manage-modal').classList.add('hidden'); };
-$('#auth-open').onclick = () => openAuth('login');
-$('#auth-close').onclick = closeAuth;
-$('#auth-modal').onclick = (e) => { if (e.target.id === 'auth-modal') closeAuth(); };
-$$('.auth-tab').forEach(btn => { btn.onclick = () => setAuthMode(btn.dataset.mode); });
-$('#auth-form').onsubmit = (e) => {
-  e.preventDefault();
-  submitAuth();
-};
-$('#change-password-close').onclick = closeChangePasswordModal;
-$('#change-password-modal').onclick = (e) => { if (e.target.id === 'change-password-modal') closeChangePasswordModal(); };
-$('#change-password-form').onsubmit = (e) => {
-  e.preventDefault();
-  submitChangePassword();
-};
 $('#submit-link-open').onclick = openSubmitLinkModal;
 $('#submit-link-close').onclick = closeSubmitLinkModal;
 $('#submit-link-modal').onclick = (e) => { if (e.target.id === 'submit-link-modal') closeSubmitLinkModal(); };
@@ -10005,10 +10026,38 @@ $('#search').oninput = (e) => {
   }, 350);
 };
 
+/* ---------- Appearance: palette and brightness are independent ---------- */
+const PALETTES = ['neutral', 'atelier', 'midnight', 'sage', 'mist', 'rose'];
+
+function applyAppearance(palette, mode) {
+  const selected = PALETTES.includes(palette) ? palette : 'neutral';
+  document.body.dataset.palette = selected;
+  document.body.dataset.theme = mode === 'dark' ? 'dark' : 'light';
+  $('#palette-select').value = selected;
+  const label = document.body.dataset.theme === 'dark' ? '切换到浅色模式' : '切换到深色模式';
+  $('#theme-toggle').title = label;
+  $('#theme-toggle').setAttribute('aria-label', label);
+}
+
+function saveAppearance(key, value) {
+  try {
+    // Check the actual persistent store: the general storage helper may be memory-only.
+    window.localStorage.setItem(key, value);
+    if (window.localStorage.getItem(key) !== value) throw new Error('Storage unavailable');
+  } catch {
+    toast('当前浏览器无法保存外观设置，刷新或重开后可能恢复默认。');
+  }
+}
+
+$('#palette-select').onchange = (event) => {
+  applyAppearance(event.target.value, document.body.dataset.theme);
+  saveAppearance('fr_palette', document.body.dataset.palette);
+};
+
 $('#theme-toggle').onclick = () => {
   const next = document.body.dataset.theme === 'dark' ? 'light' : 'dark';
-  document.body.dataset.theme = next;
-  storage.setItem('fr_theme', next);
+  applyAppearance(document.body.dataset.palette, next);
+  saveAppearance('fr_theme', next);
 };
 
 window.addEventListener('error', (e) => {
@@ -10180,13 +10229,13 @@ $('#reader-pane').addEventListener('scroll', hideArticleLinkMenu, { passive: tru
 
 /* ---------- Init ---------- */
 (async function init() {
-  document.body.dataset.theme = storage.getItem('fr_theme') || 'light';
+  applyAppearance(storage.getItem('fr_palette'), storage.getItem('fr_theme'));
   hydrateLucideIcons();
   loadAiProfilesForScope();
   renderAgentPrompts();
   applyReaderPrefs();
   renderAiSettings();
-  renderAuthState();
+  renderPersonalIdentityState();
   setSidebarCollapsed(state.sidebarCollapsed);
   setLeftCollapsed(state.leftCollapsed);
   setEntryPaneWidth(state.entryPaneWidth, { persist: false });
@@ -10197,8 +10246,8 @@ $('#reader-pane').addEventListener('scroll', hideArticleLinkMenu, { passive: tru
   setContextPanel(state.contextPanel, { persist: false, expand: false });
   $('#entry-list').innerHTML = '<div class="list-empty">正在加载订阅内容…</div>';
   try {
-    const [, data] = await Promise.all([
-      loadMe(),
+    await loadMe();
+    const [data] = await Promise.all([
       loadSources(),
       loadEntries(),
       loadContributors(),
@@ -10216,6 +10265,11 @@ $('#reader-pane').addEventListener('scroll', hideArticleLinkMenu, { passive: tru
       updateListTitle(); renderList(); renderSidebar();
     }
   } catch (e) {
+    if (state.identityStatus !== 'ready') {
+      state.identityStatus = 'unavailable';
+      setCurrentUser(null);
+      renderPersonalIdentityState();
+    }
     toast('加载失败: ' + e.message, 5000);
     $('#entry-list').innerHTML = `<div class="list-empty">数据加载失败：${escapeHtml(e.message)}<br/><button class="ghost-btn" onclick="location.reload()" style="margin-top:10px">重新加载</button></div>`;
   }

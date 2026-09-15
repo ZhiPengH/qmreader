@@ -99,13 +99,7 @@
       <div class="sidebar-scroll" id="feed-groups"><!-- groups injected --></div>
 
       <div class="account-strip">
-        <button id="auth-open" class="account-card" type="button">
-          <span class="account-avatar" id="guest-avatar">Q</span>
-          <span class="account-text">
-            <strong>登录 / 注册</strong>
-            <span>同步阅读与贡献</span>
-          </span>
-        </button>
+        <span id="identity-status" class="account-text" role="status">正在加载个人数据…</span>
         <button id="account-info" class="account-card account-info hidden" type="button"></button>
         <button id="account-settings-open" class="icon-btn account-settings hidden" type="button" title="账户设置" aria-label="账户设置">
           <span data-qm-icon="settings"></span><b id="notification-count" class="hidden">0</b>
@@ -114,8 +108,6 @@
           <button id="account-menu-dashboard" type="button" role="menuitem">我的后台</button>
           <button id="account-menu-profile" type="button" role="menuitem">我的贡献</button>
           <button id="account-menu-admin" class="hidden" type="button" role="menuitem">系统后台</button>
-          <button id="account-menu-password" type="button" role="menuitem">修改密码</button>
-          <button id="account-menu-logout" type="button" role="menuitem">退出登录</button>
         </div>
       </div>
 
@@ -324,7 +316,7 @@
           </div>
           <div id="comments-list" class="comments-list"></div>
           <div id="comment-gate" class="asset-gate hidden">
-            <button id="comment-login" class="ghost-btn" type="button">登录后发布点评</button>
+            <span>个人数据尚未就绪，暂时无法发布点评</span>
           </div>
           <form id="comment-form" class="comment-form">
             <div id="comment-tools" class="comment-tools" aria-label="点评模板">
@@ -355,6 +347,18 @@
             <p>编辑公开主页、查看通知和管理你沉淀过的资产。</p>
           </div>
           <div class="my-assets-header-actions">
+            <label class="palette-control" for="palette-select">
+              <span class="palette-swatch" aria-hidden="true"></span>
+              <span>配色</span>
+              <select id="palette-select" aria-label="配色方案" title="配色保存在当前浏览器，与明暗模式独立">
+                <option value="neutral">默认</option>
+                <option value="atelier">Atelier 暖陶</option>
+                <option value="midnight">Midnight 琥珀</option>
+                <option value="sage">Sage 鼠尾草</option>
+                <option value="mist">Mist 雾蓝</option>
+                <option value="rose">Rose 玫瑰</option>
+              </select>
+            </label>
             <a id="my-public-profile-link" class="ghost-btn my-public-profile-link hidden" href="#" target="_blank" rel="noopener">公开页</a>
             <a id="my-public-rss-link" class="ghost-btn my-public-rss-link hidden" href="#" target="_blank" rel="noopener">RSS</a>
             <button class="icon-btn" id="my-comments-close" title="返回阅读器" aria-label="返回阅读器"><span data-qm-icon="arrow-left"></span></button>
@@ -364,6 +368,7 @@
           <button class="dashboard-tab active" type="button" data-dashboard-tab="profile">个人资料</button>
           <button class="dashboard-tab" type="button" data-dashboard-tab="ai">AI 设置</button>
           <button class="dashboard-tab" type="button" data-dashboard-tab="contributions">我的贡献</button>
+          <button class="dashboard-tab" type="button" data-dashboard-tab="sources">RSS 订阅源</button>
         </div>
         <section id="dashboard-profile-panel" class="dashboard-panel">
           <section class="profile-dashboard">
@@ -414,6 +419,31 @@
         </section>
         <section id="dashboard-ai-panel" class="dashboard-panel hidden">
           <div id="dashboard-ai-mount" class="dashboard-ai-mount"></div>
+        </section>
+        <section id="dashboard-sources-panel" class="dashboard-panel hidden" aria-label="RSS 订阅源">
+          <div class="rss-heading"><div><h2>RSS 订阅源</h2><p>管理内置源与自定义订阅。停用或删除会停止抓取；已有文章、收藏和阅读历史保留。</p></div><button id="rss-reload" class="ghost-btn" type="button">重新加载</button></div>
+          <p id="rss-status" class="rss-notice" role="status" aria-live="polite"></p>
+          <details id="rss-editor-details" class="rss-box">
+            <summary id="rss-editor-title">添加订阅源</summary>
+            <form id="rss-source-form" class="rss-form">
+              <label>名称<input id="rss-name" required maxlength="200" autocomplete="off"></label>
+              <label>分类<select id="rss-category"><option value="article">文章</option><option value="news">资讯</option><option value="podcast">播客</option></select></label>
+              <label class="rss-wide">RSS 地址（每行一个）<textarea id="rss-feeds" rows="3" required placeholder="https://example.com/feed.xml"></textarea></label>
+              <div id="rss-advanced-note" class="rss-wide hidden"><p id="rss-advanced-description">此源包含高级抓取配置，默认保留。改用标准 RSS 后，保存会替换原配置及备用抓取方式。</p><button id="rss-use-standard" class="ghost-btn" type="button">改用标准 RSS 地址</button></div>
+              <div class="rss-actions rss-wide"><button id="rss-save" class="ghost-btn primary" type="submit">添加订阅</button><button id="rss-cancel" class="ghost-btn" type="button">清空</button></div>
+            </form>
+          </details>
+          <details class="rss-box"><summary>批量导入 OPML / RSS 地址</summary>
+            <form id="rss-import-form" class="rss-form">
+              <label class="rss-wide">导入方式<select id="rss-import-format"><option value="urls">粘贴 RSS 地址</option><option value="opml">上传 OPML 文件</option></select></label>
+              <label id="rss-urls-label" class="rss-wide">RSS 地址（每行一个）<textarea id="rss-import-urls" rows="5" placeholder="https://example.com/feed.xml"></textarea></label>
+              <label id="rss-file-label" class="rss-wide hidden">OPML 文件<input id="rss-import-file" type="file" accept=".opml,.xml,text/xml,application/xml"></label>
+              <p class="rss-wide">每次最多 200 个订阅，内容不超过 1 MB；重复地址会跳过。导入结果逐项显示。</p>
+              <div class="rss-actions rss-wide"><button class="ghost-btn primary" type="submit">开始导入</button></div>
+            </form><div id="rss-import-results" aria-live="polite"></div>
+          </details>
+          <div id="rss-source-list" class="rss-source-list"></div>
+          <details id="rss-deleted-details" class="rss-box"><summary>已删除的订阅源 <span id="rss-deleted-count">0</span></summary><p>恢复后重新显示并恢复抓取，原有阅读数据保持不变。</p><div id="rss-deleted-list" class="rss-source-list"></div></details>
         </section>
         <section id="dashboard-contributions-panel" class="dashboard-panel hidden">
           <div class="my-asset-tabs" role="tablist" aria-label="我的资产类型">
@@ -489,7 +519,7 @@
           <header class="admin-submission-head">
             <div>
               <h2 id="admin-submission-title">用户投稿管理</h2>
-              <p>封禁违规账号、撤销登录会话，并清理其读者投稿。数据库保留审计记录。</p>
+              <p>停用用户并清理其读者投稿。数据库保留审计记录。</p>
             </div>
             <form id="admin-submission-search-form" class="admin-submission-search" role="search">
               <input id="admin-submission-search" type="search" maxlength="100" placeholder="搜索昵称或邮箱前缀" aria-label="搜索投稿用户" />
@@ -567,40 +597,6 @@
       <header><h2>管理订阅源</h2><button class="icon-btn" id="manage-close" aria-label="关闭管理订阅源"><span data-qm-icon="x"></span></button></header>
       <div id="manage-status" class="manage-status"></div>
       <div id="manage-list" class="manage-list"></div>
-    </div>
-  </div>
-
-  <div id="auth-modal" class="modal hidden">
-    <div class="modal-box auth-box">
-      <header><h2 id="auth-title">登录</h2><button class="icon-btn" id="auth-close" aria-label="关闭登录弹窗"><span data-qm-icon="x"></span></button></header>
-      <form id="auth-form" class="auth-form">
-        <div class="auth-tabs">
-          <button type="button" class="auth-tab active" data-mode="login">登录</button>
-          <button type="button" class="auth-tab" data-mode="register">注册</button>
-        </div>
-        <input id="auth-email" type="email" autocomplete="email" placeholder="邮箱" required />
-        <input id="auth-password" type="password" autocomplete="current-password" placeholder="密码（至少 8 位）" required />
-        <input id="auth-name" class="hidden" type="text" maxlength="40" autocomplete="nickname" placeholder="显示名" />
-        <button id="auth-submit" class="ghost-btn" type="submit">登录</button>
-      </form>
-    </div>
-  </div>
-
-  <div id="change-password-modal" class="modal hidden">
-    <div class="modal-box auth-box">
-      <header>
-        <div>
-          <h2>修改密码</h2>
-          <p>需要先验证当前密码。</p>
-        </div>
-        <button id="change-password-close" class="icon-btn" type="button" aria-label="关闭修改密码"><span data-qm-icon="x"></span></button>
-      </header>
-      <form id="change-password-form" class="auth-form">
-        <input id="change-password-current" type="password" autocomplete="current-password" placeholder="当前密码" required />
-        <input id="change-password-new" type="password" autocomplete="new-password" placeholder="新密码（至少 8 位）" required />
-        <input id="change-password-confirm" type="password" autocomplete="new-password" placeholder="再次输入新密码" required />
-        <button id="change-password-submit" class="ghost-btn primary" type="submit">保存新密码</button>
-      </form>
     </div>
   </div>
 

@@ -1,17 +1,29 @@
 const express = require('express');
 const path = require('path');
 const fs = require('fs');
+const { createHash } = require('node:crypto');
 const { fork } = require('child_process');
 const compression = require('compression');
 const fetcher = require('./lib/fetcher');
 const deepseek = require('./lib/deepseek');
 const { requestAiConfig } = require('./lib/request-ai-config');
 const store = require('./lib/store');
+const subscriptions = require('./lib/subscriptions');
 
 const app = express();
 app.disable('x-powered-by');
 const PORT = process.env.PORT || 8080;
 const HOST = process.env.HOST || '0.0.0.0';
+function parseOrigin(value) {
+  const url = new URL(value);
+  if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password
+      || url.pathname !== '/' || url.search || url.hash) throw new Error('Invalid origin');
+  return url.origin;
+}
+// Explicit external origin survives reverse proxies that rewrite Host.
+// Do not derive this allowlist from client-supplied forwarding headers.
+const PUBLIC_ORIGIN = process.env.PUBLIC_ORIGIN?.trim()
+  ? parseOrigin(process.env.PUBLIC_ORIGIN.trim()) : '';
 const MINUTE_MS = 60 * 1000;
 const HOUR_MS = 60 * MINUTE_MS;
 const DAILY_REFRESH_HOUR_SHANGHAI = 8;
@@ -29,9 +41,11 @@ const AUTO_REWRITE_SOURCE_IDS = new Set(String(process.env.AUTO_REWRITE_SOURCE_I
   .split(',')
   .map(id => id.trim())
   .filter(Boolean));
-const SESSION_COOKIE = 'qm_session';
-const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 30;
 const INDEX_PATH = path.join(__dirname, 'public', 'index.html');
+// Content-addressed URLs prevent new HTML from reusing an old immutable bundle.
+const CLIENT_ASSET_VERSIONS = Object.fromEntries(['app.js', 'styles.css'].map(name => [
+  name, createHash('sha256').update(fs.readFileSync(path.join(__dirname, 'public', name))).digest('hex'),
+]));
 const DOMPURIFY_PATH = require.resolve('dompurify/dist/purify.min.js');
 const DOMPURIFY_VERSION = JSON.parse(fs.readFileSync(
   path.join(path.dirname(require.resolve('dompurify')), '..', 'package.json'),
@@ -83,20 +97,22 @@ app.use((req, res, next) => {
   const origin = String(req.get('origin') || '').trim();
   if (!origin) return next();
   try {
-    if (new URL(origin).host !== req.get('host')) return res.status(403).json({ error: '拒绝跨站操作' });
+    const expectedOrigin = PUBLIC_ORIGIN || `${req.protocol}://${req.get('host')}`;
+    if (parseOrigin(origin) !== expectedOrigin) return res.status(403).json({ error: '拒绝跨站操作' });
   } catch {
     return res.status(403).json({ error: '请求来源无效' });
   }
   return next();
 });
+// Lazycat protects the external entry. Cookies never select or elevate this identity.
 app.use((req, res, next) => {
   try {
-    req.user = store.getUserBySessionToken(cookieValue(req, SESSION_COOKIE));
+    req.user = store.getPersonalUser();
+    next();
   } catch (error) {
-    console.warn('Session lookup skipped:', error.message || error);
-    req.user = null;
+    console.error('Personal identity unavailable:', error.message);
+    res.status(503).json({ error: '个人资料暂不可用，请稍后重试' });
   }
-  next();
 });
 
 let refreshing = false;
@@ -155,16 +171,6 @@ const submitLinkDailyRateLimit = createRateLimiter({
   max: 20,
   message: '每天最多收录 20 个链接，请明天再试',
   key: req => `user:${req.user && req.user.id || 'anonymous'}`,
-});
-const registerRateLimit = createRateLimiter({
-  windowMs: 60 * 60 * 1000,
-  max: 5,
-  message: '该网络注册账号过于频繁，请稍后再试',
-});
-const loginRateLimit = createRateLimiter({
-  windowMs: 15 * 60 * 1000,
-  max: 30,
-  message: '登录尝试过于频繁，请稍后再试',
 });
 const originalFetchRateLimit = createRateLimiter({
   windowMs: 10 * 60 * 1000,
@@ -1688,6 +1694,8 @@ function renderIndex(req, entry = null) {
   const { title, tags } = socialMetaTags(req, entry);
   const umami = umamiConfigTag(req);
   return html
+    .replace(/(src|href)="\/(app\.js|styles\.css)(?:\?[^" ]*)?"/g,
+      (_, attr, name) => `${attr}="/${name}?v=${CLIENT_ASSET_VERSIONS[name]}"`)
     .replace(/src="\/purify\.min\.js\?v=[^"]+"/, `src="/purify.min.js?v=${escapeHtml(DOMPURIFY_VERSION)}"`)
     .replace(/<link rel="alternate" type="application\/rss\+xml" title="[^"]*" href="[^"]*" \/>/, rssAlternateTag(req))
     .replace(/<title>.*?<\/title>/, `<title>${escapeHtml(title)}</title>`)
@@ -1902,12 +1910,18 @@ app.get(['/me', '/dashboard', '/admin'], (req, res) => {
   res.type('html').send(renderIndex(req));
 });
 
+app.get('/index.html', (req, res) => {
+  res.setHeader('Cache-Control', 'no-cache');
+  res.type('html').send(renderIndex(req));
+});
+
 app.use(express.static(path.join(__dirname, 'public'), {
   setHeaders(res, file) {
     if (file.endsWith('.html')) {
       res.setHeader('Cache-Control', 'no-cache');
     } else if (/\.(?:css|js)$/.test(file)) {
-      const versioned = /(?:\?|&)v=[^&]+/.test(String(res.req && res.req.originalUrl || ''));
+      const expected = CLIENT_ASSET_VERSIONS[path.basename(file)];
+      const versioned = expected && String(res.req?.query?.v || '') === expected;
       res.setHeader('Cache-Control', versioned
         ? 'public, max-age=31536000, immutable'
         : 'public, max-age=0, must-revalidate');
@@ -1916,39 +1930,6 @@ app.use(express.static(path.join(__dirname, 'public'), {
     }
   },
 }));
-
-function cookieValue(req, name) {
-  const header = String(req.headers.cookie || '');
-  const parts = header.split(';').map(part => part.trim()).filter(Boolean);
-  for (const part of parts) {
-    const idx = part.indexOf('=');
-    if (idx < 0) continue;
-    if (part.slice(0, idx) === name) return decodeURIComponent(part.slice(idx + 1));
-  }
-  return '';
-}
-
-function secureCookie(req) {
-  return req.secure || req.get('x-forwarded-proto') === 'https' || process.env.COOKIE_SECURE === '1';
-}
-
-function setSessionCookie(req, res, token, expiresAt) {
-  const attrs = [
-    `${SESSION_COOKIE}=${encodeURIComponent(token)}`,
-    'Path=/',
-    'HttpOnly',
-    'SameSite=Lax',
-    `Max-Age=${Math.max(1, Math.floor((expiresAt - Date.now()) / 1000))}`,
-  ];
-  if (secureCookie(req)) attrs.push('Secure');
-  res.setHeader('Set-Cookie', attrs.join('; '));
-}
-
-function clearSessionCookie(req, res) {
-  const attrs = [`${SESSION_COOKIE}=`, 'Path=/', 'HttpOnly', 'SameSite=Lax', 'Max-Age=0'];
-  if (secureCookie(req)) attrs.push('Secure');
-  res.setHeader('Set-Cookie', attrs.join('; '));
-}
 
 function sendError(res, error, fallback = 'request failed') {
   const status = error.statusCode || 500;
@@ -1971,9 +1952,9 @@ function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-function requireLogin(req, res, next) {
+function requirePersonalIdentity(req, res, next) {
   if (req.user) return next();
-  res.status(401).json({ error: '请先登录或注册账号' });
+  res.status(503).json({ error: '个人资料暂不可用，请稍后重试' });
 }
 
 function requireAdmin(req, res, next) {
@@ -2155,22 +2136,6 @@ function notifyTarget(target, actor, { type, objectType, entryId, fallbackMessag
     entryId,
     message: target.message || fallbackMessage,
   });
-}
-
-function seedAdminFromEnv() {
-  const email = String(process.env.ADMIN_EMAIL || '').trim();
-  const password = String(process.env.ADMIN_PASSWORD || '').trim();
-  if (!email || !password) return;
-  try {
-    store.ensureAdminUser({
-      email,
-      password,
-      displayName: process.env.ADMIN_NAME || '向阳乔木',
-    });
-    console.log(`Admin user ready: ${email}`);
-  } catch (error) {
-    console.warn('Admin user seed skipped:', error.message || error);
-  }
 }
 
 function normalizeBackgroundJob(job = {}) {
@@ -2695,7 +2660,52 @@ app.get('/api/me', (req, res) => {
   res.json({ user: req.user || null });
 });
 
-app.patch('/api/me/profile', requireLogin, (req, res) => {
+// Personal subscription management shares the existing identity and origin checks.
+app.get('/api/me/sources', requirePersonalIdentity, (req, res) => {
+  res.json({ sources: fetcher.getSourcesMeta({ includeDeleted: true }).filter(source => !source.manual) });
+});
+function sourceResponse(id) {
+  return fetcher.getSourcesMeta({ includeDeleted: true }).find(source => source.id === id);
+}
+function hintNewSubscription(id) {
+  try { triggerSourceInteractionRefresh(id, 'subscription-update'); }
+  catch (error) { console.error('[subscription refresh]', id, error.message); }
+}
+app.post('/api/me/sources', requirePersonalIdentity, async (req, res) => {
+  try {
+    const source = await subscriptions.createSource(req.body);
+    res.status(201).json({ source: sourceResponse(source.id) });
+    if (source.enabled && !source.deleted) setImmediate(() => hintNewSubscription(source.id));
+  } catch (error) { sendError(res, error, '新增订阅失败'); }
+});
+app.post('/api/me/sources/import', requirePersonalIdentity, async (req, res) => {
+  try {
+    const result = await subscriptions.importSources(req.body);
+    res.json(result);
+    const sourceIds = result.results.filter(item => item.status === 'added').map(item => item.id);
+    if (sourceIds.length) setImmediate(() => {
+      try { startBackgroundJob({ kind: 'refresh', sourceIds, reason: 'subscription-import' }); }
+      catch (error) { console.error('[subscription import refresh]', error.message); }
+    });
+  } catch (error) { sendError(res, error, '导入订阅失败'); }
+});
+app.patch('/api/me/sources/:id', requirePersonalIdentity, async (req, res) => {
+  try {
+    const source = await subscriptions.updateSource(req.params.id, req.body);
+    res.json({ source: sourceResponse(source.id) });
+    if (source.enabled && !source.deleted && (req.body.feeds || req.body.enabled || req.body.deleted === false)) {
+      setImmediate(() => hintNewSubscription(source.id));
+    }
+  } catch (error) { sendError(res, error, '更新订阅失败'); }
+});
+app.delete('/api/me/sources/:id', requirePersonalIdentity, async (req, res) => {
+  try {
+    await subscriptions.updateSource(req.params.id, { deleted: true });
+    res.json({ ok: true });
+  } catch (error) { sendError(res, error, '移除订阅失败'); }
+});
+
+app.patch('/api/me/profile', requirePersonalIdentity, (req, res) => {
   try {
     const user = store.updateUserProfile(req.user.id, {
       displayName: req.body && req.body.displayName,
@@ -2710,19 +2720,7 @@ app.patch('/api/me/profile', requireLogin, (req, res) => {
   }
 });
 
-app.post('/api/me/password', requireLogin, (req, res) => {
-  try {
-    const user = store.updateUserPassword(req.user.id, {
-      currentPassword: req.body && req.body.currentPassword,
-      newPassword: req.body && req.body.newPassword,
-    });
-    res.json({ user });
-  } catch (e) {
-    sendError(res, e, 'password update failed');
-  }
-});
-
-app.get('/api/me/notifications', requireLogin, (req, res) => {
+app.get('/api/me/notifications', requirePersonalIdentity, (req, res) => {
   const limit = Math.max(1, Math.min(200, Number.parseInt(req.query.limit, 10) || 80));
   res.json({
     notifications: store.getUserNotifications(req.user.id, { limit }),
@@ -2730,69 +2728,37 @@ app.get('/api/me/notifications', requireLogin, (req, res) => {
   });
 });
 
-app.post('/api/me/notifications/read', requireLogin, (req, res) => {
+app.post('/api/me/notifications/read', requirePersonalIdentity, (req, res) => {
   const changed = store.markNotificationsRead(req.user.id);
-  const user = store.getUserBySessionToken(cookieValue(req, SESSION_COOKIE)) || req.user;
+  const user = store.getPersonalUser();
   res.json({ ok: true, changed, user });
 });
 
-app.post('/api/auth/register', registerRateLimit, (req, res) => {
-  try {
-    const user = store.createUser({
-      email: req.body && req.body.email,
-      password: req.body && req.body.password,
-      displayName: req.body && req.body.displayName,
-    });
-    const session = store.createSession(user.id, SESSION_TTL_MS);
-    setSessionCookie(req, res, session.token, session.expiresAt);
-    res.json({ user });
-  } catch (e) {
-    sendError(res, e, 'register failed');
-  }
-});
-
-app.post('/api/auth/login', loginRateLimit, (req, res) => {
-  try {
-    const user = store.authenticateUser(req.body && req.body.email, req.body && req.body.password);
-    const session = store.createSession(user.id, SESSION_TTL_MS);
-    setSessionCookie(req, res, session.token, session.expiresAt);
-    res.json({ user });
-  } catch (e) {
-    sendError(res, e, 'login failed');
-  }
-});
-
-app.post('/api/auth/logout', (req, res) => {
-  store.deleteSession(cookieValue(req, SESSION_COOKIE));
-  clearSessionCookie(req, res);
-  res.json({ ok: true });
-});
-
-app.get('/api/me/entry-states', requireLogin, (req, res) => {
+app.get('/api/me/entry-states', requirePersonalIdentity, (req, res) => {
   res.json({ states: store.getUserEntryStates(req.user.id) });
 });
 
-app.get('/api/me/comments', requireLogin, (req, res) => {
+app.get('/api/me/comments', requirePersonalIdentity, (req, res) => {
   const limit = Math.max(1, Math.min(200, Number.parseInt(req.query.limit, 10) || 100));
   res.json({ comments: store.getUserComments(req.user.id, { limit }) });
 });
 
-app.get('/api/me/annotations', requireLogin, (req, res) => {
+app.get('/api/me/annotations', requirePersonalIdentity, (req, res) => {
   const limit = Math.max(1, Math.min(200, Number.parseInt(req.query.limit, 10) || 100));
   res.json({ annotations: store.getUserAnnotations(req.user.id, { limit }) });
 });
 
-app.get('/api/me/translations', requireLogin, (req, res) => {
+app.get('/api/me/translations', requirePersonalIdentity, (req, res) => {
   const limit = Math.max(1, Math.min(200, Number.parseInt(req.query.limit, 10) || 100));
   res.json({ translations: store.getUserTranslations(req.user.id, { limit }) });
 });
 
-app.get('/api/me/rewrites', requireLogin, (req, res) => {
+app.get('/api/me/rewrites', requirePersonalIdentity, (req, res) => {
   const limit = Math.max(1, Math.min(200, Number.parseInt(req.query.limit, 10) || 100));
   res.json({ rewrites: store.getUserRewrites(req.user.id, { limit }) });
 });
 
-app.get('/api/me/chat-messages', requireLogin, (req, res) => {
+app.get('/api/me/chat-messages', requirePersonalIdentity, (req, res) => {
   const limit = Math.max(1, Math.min(200, Number.parseInt(req.query.limit, 10) || 100));
   res.json({ messages: store.getUserChatMessages(req.user.id, { limit }) });
 });
@@ -2939,7 +2905,7 @@ app.get('/api/contributors/:id', (req, res) => {
   });
 });
 
-app.post('/api/contributors/:id/follow', requireLogin, (req, res) => {
+app.post('/api/contributors/:id/follow', requirePersonalIdentity, (req, res) => {
   try {
     const follow = req.body && typeof req.body.follow === 'boolean' ? req.body.follow : true;
     const contributor = store.setUserFollow(req.user.id, req.params.id, follow);
@@ -2949,7 +2915,7 @@ app.post('/api/contributors/:id/follow', requireLogin, (req, res) => {
   }
 });
 
-app.post('/api/me/entry-state', requireLogin, (req, res) => {
+app.post('/api/me/entry-state', requirePersonalIdentity, (req, res) => {
   const { entryId, read, starred, viewed } = req.body || {};
   const entry = fetcher.getEntryById(entryId, req.user);
   if (!entry) return res.status(404).json({ error: 'entry not found' });
@@ -2965,7 +2931,7 @@ app.post('/api/me/entry-state', requireLogin, (req, res) => {
   }
 });
 
-app.post('/api/me/entry-states/read', requireLogin, (req, res) => {
+app.post('/api/me/entry-states/read', requirePersonalIdentity, (req, res) => {
   const requested = Array.isArray(req.body && req.body.entryIds) ? req.body.entryIds : [];
   const entryIds = requested
     .map(id => fetcher.getEntryById(id))
@@ -2978,7 +2944,7 @@ app.post('/api/me/entry-states/read', requireLogin, (req, res) => {
   }
 });
 
-app.post('/api/ai/models', requireLogin, async (req, res) => {
+app.post('/api/ai/models', requirePersonalIdentity, async (req, res) => {
   try {
     const result = await deepseek.listModels(requestAiConfig(req));
     res.json(result);
@@ -2987,7 +2953,7 @@ app.post('/api/ai/models', requireLogin, async (req, res) => {
   }
 });
 
-app.post('/api/ai/test', requireLogin, async (req, res) => {
+app.post('/api/ai/test', requirePersonalIdentity, async (req, res) => {
   try {
     const result = await deepseek.testConnection(requestAiConfig(req));
     res.json(result);
@@ -3040,7 +3006,7 @@ app.post('/api/entry/:id/view', (req, res) => {
   }
 });
 
-app.post('/api/entry/:id/reaction', requireLogin, (req, res) => {
+app.post('/api/entry/:id/reaction', requirePersonalIdentity, (req, res) => {
   const entry = fetcher.getEntryById(req.params.id, req.user);
   if (!entry) return res.status(404).json({ error: 'entry not found' });
   try {
@@ -3060,7 +3026,7 @@ app.post('/api/entry/:id/reaction', requireLogin, (req, res) => {
   }
 });
 
-app.post('/api/submit-link', requireLogin, submitLinkRateLimit, submitLinkDailyRateLimit, async (req, res) => {
+app.post('/api/submit-link', requirePersonalIdentity, submitLinkRateLimit, submitLinkDailyRateLimit, async (req, res) => {
   const url = String((req.body && req.body.url) || '').trim();
   const note = String((req.body && req.body.note) || '').trim();
   if (!url) return res.status(400).json({ error: '请填写要提交的链接' });
@@ -3090,7 +3056,7 @@ app.get('/api/entry/:id/translation', (req, res) => {
   res.json({ translation: translationResponse(entry, req.user, req.query.assetId) });
 });
 
-app.post('/api/entry/:id/translation', requireLogin, async (req, res) => {
+app.post('/api/entry/:id/translation', requirePersonalIdentity, async (req, res) => {
   const entry = fetcher.getEntryById(req.params.id);
   if (!entry) return res.status(404).json({ error: 'entry not found' });
   try {
@@ -3120,7 +3086,7 @@ app.get('/api/entry/:id/rewrite', (req, res) => {
   res.json({ rewrite: rewriteResponse(entry, req.user, req.query.assetId) });
 });
 
-app.post('/api/entry/:id/rewrite', requireLogin, async (req, res) => {
+app.post('/api/entry/:id/rewrite', requirePersonalIdentity, async (req, res) => {
   const entry = fetcher.getEntryById(req.params.id);
   if (!entry) return res.status(404).json({ error: 'entry not found' });
   try {
@@ -3149,7 +3115,7 @@ app.post('/api/entry/:id/rewrite', requireLogin, async (req, res) => {
   }
 });
 
-app.post('/api/entry/:id/assets/:type/helpful', requireLogin, (req, res) => {
+app.post('/api/entry/:id/assets/:type/helpful', requirePersonalIdentity, (req, res) => {
   const entry = fetcher.getEntryById(req.params.id);
   if (!entry) return res.status(404).json({ error: 'entry not found' });
   const type = normalizeAssetDirectoryType(String(req.params.type || ''));
@@ -3190,7 +3156,7 @@ app.get('/api/entry/:id/comments', (req, res) => {
   res.json({ comments: store.getComments(entry.id, req.user) });
 });
 
-app.post('/api/entry/:id/comments', requireLogin, (req, res) => {
+app.post('/api/entry/:id/comments', requirePersonalIdentity, (req, res) => {
   const entry = fetcher.getEntryById(req.params.id);
   if (!entry) return res.status(404).json({ error: 'entry not found' });
   const body = String((req.body && req.body.body) || '').trim();
@@ -3203,7 +3169,7 @@ app.post('/api/entry/:id/comments', requireLogin, (req, res) => {
   res.json({ comment, comments: store.getComments(entry.id, req.user) });
 });
 
-app.patch('/api/entry/:id/comments/:commentId', requireLogin, (req, res) => {
+app.patch('/api/entry/:id/comments/:commentId', requirePersonalIdentity, (req, res) => {
   const entry = fetcher.getEntryById(req.params.id);
   if (!entry) return res.status(404).json({ error: 'entry not found' });
   try {
@@ -3217,7 +3183,7 @@ app.patch('/api/entry/:id/comments/:commentId', requireLogin, (req, res) => {
   }
 });
 
-app.post('/api/entry/:id/comments/:commentId/helpful', requireLogin, (req, res) => {
+app.post('/api/entry/:id/comments/:commentId/helpful', requirePersonalIdentity, (req, res) => {
   const entry = fetcher.getEntryById(req.params.id);
   if (!entry) return res.status(404).json({ error: 'entry not found' });
   try {
@@ -3246,7 +3212,7 @@ app.post('/api/entry/:id/comments/:commentId/helpful', requireLogin, (req, res) 
   }
 });
 
-app.delete('/api/entry/:id/comments/:commentId', requireLogin, (req, res) => {
+app.delete('/api/entry/:id/comments/:commentId', requirePersonalIdentity, (req, res) => {
   const entry = fetcher.getEntryById(req.params.id);
   if (!entry) return res.status(404).json({ error: 'entry not found' });
   try {
@@ -3264,7 +3230,7 @@ app.get('/api/entry/:id/annotations', (req, res) => {
   res.json({ annotations: store.getAnnotations(entry.id, req.user) });
 });
 
-app.post('/api/entry/:id/annotations', requireLogin, (req, res) => {
+app.post('/api/entry/:id/annotations', requirePersonalIdentity, (req, res) => {
   const entry = fetcher.getEntryById(req.params.id);
   if (!entry) return res.status(404).json({ error: 'entry not found' });
   try {
@@ -3287,7 +3253,7 @@ app.post('/api/entry/:id/annotations', requireLogin, (req, res) => {
   }
 });
 
-app.post('/api/entry/:id/annotations/:annotationId/replies', requireLogin, (req, res) => {
+app.post('/api/entry/:id/annotations/:annotationId/replies', requirePersonalIdentity, (req, res) => {
   const entry = fetcher.getEntryById(req.params.id);
   if (!entry) return res.status(404).json({ error: 'entry not found' });
   try {
@@ -3311,7 +3277,7 @@ app.post('/api/entry/:id/annotations/:annotationId/replies', requireLogin, (req,
   }
 });
 
-app.post('/api/entry/:id/annotations/:annotationId/helpful', requireLogin, (req, res) => {
+app.post('/api/entry/:id/annotations/:annotationId/helpful', requirePersonalIdentity, (req, res) => {
   const entry = fetcher.getEntryById(req.params.id);
   if (!entry) return res.status(404).json({ error: 'entry not found' });
   try {
@@ -3340,7 +3306,7 @@ app.post('/api/entry/:id/annotations/:annotationId/helpful', requireLogin, (req,
   }
 });
 
-app.delete('/api/entry/:id/annotations/:annotationId', requireLogin, (req, res) => {
+app.delete('/api/entry/:id/annotations/:annotationId', requirePersonalIdentity, (req, res) => {
   const entry = fetcher.getEntryById(req.params.id);
   if (!entry) return res.status(404).json({ error: 'entry not found' });
   try {
@@ -3352,7 +3318,7 @@ app.delete('/api/entry/:id/annotations/:annotationId', requireLogin, (req, res) 
   }
 });
 
-app.post('/api/entry/:id/chat', requireLogin, async (req, res) => {
+app.post('/api/entry/:id/chat', requirePersonalIdentity, async (req, res) => {
   const entry = fetcher.getEntryById(req.params.id);
   if (!entry) return res.status(404).json({ error: 'entry not found' });
   try {
@@ -3367,7 +3333,7 @@ app.post('/api/entry/:id/chat', requireLogin, async (req, res) => {
   }
 });
 
-app.post('/api/entry/:id/chat/stream', requireLogin, async (req, res) => {
+app.post('/api/entry/:id/chat/stream', requirePersonalIdentity, async (req, res) => {
   const entry = fetcher.getEntryById(req.params.id);
   if (!entry) return res.status(404).json({ error: 'entry not found' });
   res.writeHead(200, {
@@ -3405,7 +3371,7 @@ app.get('/api/entry/:id/chat', (req, res) => {
   res.json({ messages: store.getChatMessages(entry.id, req.user) });
 });
 
-app.post('/api/entry/:id/chat/:messageId/helpful', requireLogin, (req, res) => {
+app.post('/api/entry/:id/chat/:messageId/helpful', requirePersonalIdentity, (req, res) => {
   const entry = fetcher.getEntryById(req.params.id);
   if (!entry) return res.status(404).json({ error: 'entry not found' });
   try {
@@ -3434,7 +3400,7 @@ app.post('/api/entry/:id/chat/:messageId/helpful', requireLogin, (req, res) => {
   }
 });
 
-app.delete('/api/entry/:id/chat/:messageId', requireLogin, (req, res) => {
+app.delete('/api/entry/:id/chat/:messageId', requirePersonalIdentity, (req, res) => {
   const entry = fetcher.getEntryById(req.params.id);
   if (!entry) return res.status(404).json({ error: 'entry not found' });
   try {
@@ -3466,7 +3432,7 @@ app.post('/api/auto-rewrite', requireAdmin, async (req, res) => {
   }
 });
 
-app.post('/api/refresh', requireLogin, async (req, res) => {
+app.post('/api/refresh', requirePersonalIdentity, async (req, res) => {
   const { sourceId } = req.body || {};
   if (sourceId) {
     const src = fetcher.getSourceById(sourceId);
@@ -3502,9 +3468,9 @@ app.post('/api/sources/:id/toggle', requireAdmin, async (req, res) => {
   res.json({ id: src.id, enabled });
 });
 
-app.listen(PORT, HOST, () => {
-  console.log(`QMReader listening on http://${HOST}:${PORT}`);
-  seedAdminFromEnv();
+const httpServer = app.listen(PORT, HOST, () => {
+  console.log(`QMReader listening on http://${HOST}:${httpServer.address().port}`);
+  store.getPersonalUser();
   fetcher.loadDisk();
   scheduleStartupRefresh();
   scheduleDailyRefresh();

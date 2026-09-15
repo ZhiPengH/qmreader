@@ -10,3 +10,7 @@ data/insights.json
 data/qmreader.sqlite*
 data/*.png
 data/*.log
+
+# Local deployment snapshots and full logs
+.news-deploy/
+.news-deploy.lock
