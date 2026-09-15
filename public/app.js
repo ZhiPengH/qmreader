@@ -410,7 +410,7 @@ function currentDefaultReaderTab() {
 
 function normalizeReaderOpenTab(tab) {
   return tab === undefined || tab === null || tab === ''
-    ? currentDefaultReaderTab()
+    ? (state.filterSource ? 'original' : currentDefaultReaderTab())
     : normalizeReaderTab(tab);
 }
 
@@ -6270,19 +6270,46 @@ function rssFetchStatus(source) {
   return '最近抓取：' + friendlyDateTime(Number(source.fetchedAt) || Date.parse(source.fetchedAt));
 }
 
+function rssArticleAge(source, now = Date.now()) {
+  const published = Date.parse(source.latestArticle?.published);
+  if (!Number.isFinite(published)) return '';
+  const days = (now - published) / 86400000;
+  return days > 30 ? 'stale' : days > 15 ? 'aging' : '';
+}
+
+function rssLatestArticleHtml(source) {
+  const article = source.latestArticle;
+  if (!article) return '<div class="rss-latest-article">暂无已抓取文章</div>';
+  const date = Date.parse(article.published);
+  const title = article.title || '无标题';
+  const chars = Array.from(title);
+  const shortTitle = chars.slice(0, 10).join('') + (chars.length > 10 ? '...' : '');
+  return `<div class="rss-latest-article" title="${escapeHtml(title)}"><time>${Number.isFinite(date) ? escapeHtml(new Date(date).toLocaleDateString('zh-CN')) : '发布日期未知'}</time>：${escapeHtml(shortTitle)}</div>`;
+}
+
+function visibleRssSources(sources, inactiveOnly, now = Date.now()) {
+  const available = sources.filter(source => !source.deleted);
+  return inactiveOnly ? available.filter(source => rssArticleAge(source, now))
+    .sort((a, b) => Date.parse(a.latestArticle.published) - Date.parse(b.latestArticle.published)) : available;
+}
+
+function toggleInactiveRssSources() {
+  state.rssInactiveOnly = !state.rssInactiveOnly;
+  renderRssSources();
+}
+
 function renderRssSources() {
   const rows = sources => sources.map(source => {
     const id = escapeHtml(source.id);
-    const feeds = (source.feeds || []).map(feed => typeof feed === 'string' ? feed : JSON.stringify(feed));
-    return `<article class="rss-source-card"><div class="rss-source-info"><strong>${escapeHtml(source.name)}</strong>
+    return `<article class="rss-source-card"><div class="rss-source-info"><strong class="rss-source-title ${rssArticleAge(source)}">${escapeHtml(source.name)}</strong>
       <span class="rss-source-meta">${escapeHtml(CATEGORY_LABELS[source.category] || source.category || '文章')} · ${source.deleted ? '已删除' : source.enabled ? '已启用' : '已停用'} · ${Number(source.entryCount) || 0} 篇文章</span>
-      <div class="rss-source-url">${feeds.map(escapeHtml).join('<br>')}</div>
-      <p class="rss-source-error">${escapeHtml(rssFetchStatus(source))}</p></div>
+      <p class="rss-source-error">${escapeHtml(rssFetchStatus(source))}</p>${rssLatestArticleHtml(source)}</div>
       <div class="rss-actions">${source.deleted
         ? `<button type="button" class="ghost-btn" data-rss-action="restore" data-rss-id="${id}">恢复</button>`
         : `<button type="button" class="ghost-btn" data-rss-action="edit" data-rss-id="${id}">编辑</button><button type="button" class="ghost-btn" data-rss-action="toggle" data-rss-id="${id}">${source.enabled ? '停用' : '启用'}</button><button type="button" class="ghost-btn" data-rss-action="delete" data-rss-id="${id}">删除</button>`}</div></article>`;
   }).join('') || '<p class="rss-empty">暂无订阅源</p>';
-  $('#rss-source-list').innerHTML = rows(state.rssSources.filter(source => !source.deleted));
+  $('#rss-source-list').innerHTML = rows(visibleRssSources(state.rssSources, state.rssInactiveOnly));
+  $('#rss-inactive').setAttribute('aria-pressed', String(Boolean(state.rssInactiveOnly)));
   $('#rss-deleted-list').innerHTML = rows(state.rssSources.filter(source => source.deleted));
   $('#rss-deleted-count').textContent = state.rssSources.filter(source => source.deleted).length;
   if (state.rssBusy) setRssBusy(true);
@@ -9875,6 +9902,7 @@ $('#rss-import-form').onsubmit = submitRssImport;
 $('#rss-cancel').onclick = resetRssEditor;
 $('#rss-use-standard').onclick = useStandardRssFeeds;
 $('#rss-reload').onclick = loadRssSources;
+$('#rss-inactive').onclick = toggleInactiveRssSources;
 $('#rss-source-list').onclick = handleRssAction;
 $('#rss-deleted-list').onclick = handleRssAction;
 $('#rss-import-format').onchange = () => {

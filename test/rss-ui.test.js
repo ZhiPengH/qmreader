@@ -9,7 +9,7 @@ function harness() {
   const context = {
     state: { me: { id: 'personal' }, rssSources: [], sources: [], rssBusy: false },
     $: selector => {
-      if (!nodes.has(selector)) nodes.set(selector, { value: '', textContent: '', innerHTML: '', files: [], classList: { add() {}, remove() {}, toggle() {} }, reset() { this.didReset = true; }, focus() {} });
+      if (!nodes.has(selector)) nodes.set(selector, { value: '', textContent: '', innerHTML: '', files: [], setAttribute(name, value) { this[name] = value; }, classList: { add() {}, remove() {}, toggle() {} }, reset() { this.didReset = true; }, focus() {} });
       return nodes.get(selector);
     },
     $$: () => [],
@@ -108,4 +108,52 @@ test('advanced RSS configuration can be explicitly replaced and cancelling reset
   c.state.rssSources = [item]; c.editRssSource(item); c.useStandardRssFeeds(); c.resetRssEditor();
   assert.equal(c.state.rssReplaceAdvanced, false);
   c.editRssSource(item); assert.equal(c.state.rssReplaceAdvanced, false); assert.equal(c.$('#rss-feeds').readOnly, true);
+});
+
+test('article freshness uses publication date and strict 15/30 day thresholds', () => {
+  const { context: c } = harness();
+  const now = Date.parse('2026-09-15T00:00:00Z');
+  for (const [days, expected] of [[0, ''], [15, ''], [16, 'aging'], [30, 'aging'], [31, 'stale'], [-1, '']]) {
+    assert.equal(c.rssArticleAge({ latestArticle: { published: new Date(now - days * 86400000).toISOString() }, fetchedAt: now }, now), expected);
+  }
+  assert.equal(c.rssArticleAge({}, now), '');
+  assert.equal(c.rssArticleAge({ latestArticle: { published: 'invalid' } }, now), '');
+});
+test('latest article escapes titles and handles empty or undated feeds', () => {
+  const { context: c } = harness();
+  assert.match(c.rssLatestArticleHtml({}), /暂无已抓取文章/);
+  const html = c.rssLatestArticleHtml({ latestArticle: { title: '<img onerror=bad>', published: null } });
+  assert(!html.includes('<img'));
+  assert.match(html, /发布日期未知/);
+});
+
+test('inactive toggle filters dated sources and sorts oldest first without altering registry order', () => {
+  const { context: c } = harness();
+  const now = Date.parse('2026-09-15T00:00:00Z');
+  const items = [16, 2, 60, 31, 15].map(days => ({ id: String(days), latestArticle: { published: new Date(now - days * 86400000).toISOString() } }));
+  items.push({ id: 'unknown' }, { id: 'deleted', deleted: true, latestArticle: items[2].latestArticle });
+  assert.deepEqual(Array.from(c.visibleRssSources(items, true, now), s => s.id), ['60', '31', '16']);
+  assert.deepEqual(Array.from(c.visibleRssSources(items, false, now), s => s.id), ['16','2','60','31','15','unknown']);
+  c.toggleInactiveRssSources(); assert.equal(c.state.rssInactiveOnly, true);
+  c.toggleInactiveRssSources(); assert.equal(c.state.rssInactiveOnly, false);
+});
+test('article summary truncates to ten unicode characters with date first', () => {
+  const { context: c } = harness();
+  const html = c.rssLatestArticleHtml({latestArticle:{title:'一二三四五六七八九十十一',published:'2026-08-24'}});
+  assert.match(html, /<\/time>：一二三四五六七八九十\.\.\./);
+  assert(!html.includes('最新文章'));
+  assert(!c.rssLatestArticleHtml({latestArticle:{title:'短标题'}}).includes('...'));
+});
+
+test('subscription articles default to original even with rewrite preference, explicit tabs still work', () => {
+  const c = { state: { filterSource: 'rss-test' }, currentDefaultReaderTab: () => 'rewrite', normalizeReaderTab: tab => tab };
+  vm.createContext(c);
+  vm.runInContext(source.slice(source.indexOf('function normalizeReaderOpenTab('), source.indexOf('function setCurrentUser(')), c);
+  assert.equal(c.normalizeReaderOpenTab(null), 'original');
+  assert.equal(c.normalizeReaderOpenTab(''), 'original');
+  assert.equal(c.normalizeReaderOpenTab('rewrite'), 'rewrite');
+  c.state.filterSource = 'another-source';
+  assert.equal(c.normalizeReaderOpenTab(undefined), 'original');
+  c.state.filterSource = null;
+  assert.equal(c.normalizeReaderOpenTab(null), 'rewrite');
 });

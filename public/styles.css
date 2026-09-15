@@ -8873,7 +8873,11 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
 .rss-source-info { min-width: 0; flex: 1; overflow-wrap: anywhere; }
 .rss-source-info strong { font-size: 14px; }
 .rss-source-meta { display: block; color: var(--text-2); font-size: 12px; margin: 6px 0; }
-.rss-source-url { color: var(--text-2); font-size: 12px; line-height: 1.5; }
+.rss-source-title.aging { color: #c56816; }
+.rss-source-title.stale { color: var(--semantic-red); }
+.rss-latest-article { margin-top: 10px; padding: 10px 12px; border-radius: 8px; background: var(--bg-2); font-size: 12px; line-height: 1.6; }
+.rss-latest-article > span, .rss-latest-article time { color: var(--text-2); }
+.rss-latest-article > div { color: var(--text-1); overflow-wrap: anywhere; }
 .rss-source-error { color: var(--text-1); font-size: 12px; margin-bottom: 0; }
 .rss-import-items { padding-left: 20px; font-size: 13px; }
 .rss-import-items li { margin: 10px 0; overflow-wrap: anywhere; }
@@ -8927,3 +8931,8 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
 }
 
 .rss-heading > .ghost-btn { flex: 0 0 auto; width: auto; }
+
+.rss-heading-actions { display: flex; flex: 0 0 auto; flex-wrap: wrap; gap: 8px; }
+.rss-heading-actions .ghost-btn { flex: 0 0 auto; width: auto; }
+#rss-inactive[aria-pressed="true"] { color: var(--text-0); border-color: var(--text-2); background: var(--bg-2); }
+@media (max-width: 600px) { .rss-heading { flex-wrap: wrap; } }
