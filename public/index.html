@@ -7,7 +7,7 @@
   <link rel="alternate" type="application/rss+xml" title="QMReader 公开资产 RSS" href="https://rss.qiaomu.ai/assets.xml" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="shortcut icon" href="/favicon.svg" />
-  <link rel="stylesheet" href="/styles.css?v=160" />
+  <link rel="stylesheet" href="/styles.css?v=161" />
   <meta name="description" content="围绕 RSS 文章沉淀中文翻译、乔木风格重写、人工点评和文章对话的公开阅读站。" />
   <link rel="canonical" href="https://rss.qiaomu.ai/" />
   <meta property="og:site_name" content="QMReader" />
@@ -44,8 +44,7 @@
     <aside id="sidebar">
       <div class="brand">
         <button id="brand-home" class="brand-home" type="button" title="返回全部" aria-label="返回全部">
-          <span class="brand-logo">Q</span>
-          <span class="brand-name">QMReader</span>
+          <img class="brand-logo" src="/brand-logo.png" alt="" />
         </button>
         <button id="sidebar-toggle" class="icon-btn" title="收起左侧栏" aria-label="收起左侧栏"><span data-qm-icon="panel-left-close"></span></button>
         <button id="theme-toggle" class="icon-btn" title="切换主题" aria-label="切换主题"><span data-qm-icon="sun-moon"></span></button>
@@ -130,10 +129,6 @@
         <button class="list-scope-btn" type="button" data-list-scope="hot">热门</button>
         <button class="list-scope-btn" type="button" data-list-scope="unread">未读</button>
       </div>
-      <div id="entry-pane-tabs" class="entry-pane-tabs hidden" role="tablist" aria-label="全部视图">
-        <button class="entry-pane-tab active" type="button" data-home-tab="entries">文章列表 <span id="home-entry-count">0</span></button>
-        <button class="entry-pane-tab" type="button" data-home-tab="assets">公开资产动态 <span id="home-asset-count">0</span></button>
-      </div>
       <div id="asset-activity-strip" class="asset-activity-strip hidden"></div>
       <div id="entry-list" class="entry-list"></div>
     </section>
@@ -146,7 +141,7 @@
     <!-- ===== Reader ===== -->
     <section id="reader-pane">
       <div id="reader-empty" class="reader-empty">
-        <div class="empty-logo">Q</div>
+        <img class="empty-logo" src="/brand-logo.png" alt="" />
         <p>选择一篇文章开始阅读</p>
       </div>
       <article id="reader" class="reader hidden">
@@ -356,15 +351,12 @@
                 <option value="rose">Rose 玫瑰</option>
               </select>
             </label>
-            <a id="my-public-profile-link" class="ghost-btn my-public-profile-link hidden" href="#" target="_blank" rel="noopener">公开页</a>
-            <a id="my-public-rss-link" class="ghost-btn my-public-rss-link hidden" href="#" target="_blank" rel="noopener">RSS</a>
             <button class="icon-btn" id="my-comments-close" title="返回阅读器" aria-label="返回阅读器"><span data-qm-icon="arrow-left"></span></button>
           </div>
         </header>
         <div class="dashboard-tabs" role="tablist" aria-label="个人后台">
           <button class="dashboard-tab active" type="button" data-dashboard-tab="profile">个人资料</button>
           <button class="dashboard-tab" type="button" data-dashboard-tab="ai">AI 设置</button>
-          <button class="dashboard-tab" type="button" data-dashboard-tab="contributions">我的贡献</button>
           <button class="dashboard-tab" type="button" data-dashboard-tab="sources">RSS 订阅源</button>
         </div>
         <section id="dashboard-profile-panel" class="dashboard-panel">
@@ -771,6 +763,6 @@
 
   <script src="/purify.min.js?v=3.4.11"></script>
   <script src="/lucide-icons.js?v=4"></script>
-  <script src="/app.js?v=161"></script>
+  <script src="/app.js?v=164"></script>
 </body>
 </html>

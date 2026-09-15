@@ -31,7 +31,7 @@ const DEFAULT_READER_OPEN_TAB = 'rewrite';
 const READER_OPEN_TABS = ['rewrite', 'original'];
 const ASSET_FILTER_TYPES = ['translation', 'rewrite', 'annotations', 'comments', 'chat'];
 const PROFILE_TAB_TYPES = [...ASSET_FILTER_TYPES, 'likes'];
-const DASHBOARD_TABS = ['profile', 'ai', 'contributions', 'sources'];
+const DASHBOARD_TABS = ['profile', 'ai', 'sources'];
 const ASSET_FOCUS_LABELS = { translation: '中文翻译', rewrite: '中文改写', annotations: '划线点评', comments: '人工点评', chat: '文章对话' };
 const ANNOTATION_SURFACE_LABELS = { original: '原文', rewrite: '中文改写', translation: '中文翻译' };
 const ANNOTATION_SURFACES = Object.keys(ANNOTATION_SURFACE_LABELS);
@@ -616,6 +616,7 @@ const state = {
   rssReplaceAdvanced: false,
   sources: [],
   entries: [],
+  entriesAll: null,
   entryRenderLimit: ENTRY_RENDER_BATCH_SIZE,
   contributors: [],
   adminSubmissionUsers: [],
@@ -632,7 +633,7 @@ const state = {
   assetFilter: null,
   assetSort: 'latest',
   contributorSort: 'latest',
-  homeTab: storage.getItem('qm_home_tab') === 'assets' ? 'assets' : 'entries',
+  homeTab: 'entries',
   q: '',
   refreshing: false,
   refreshProgress: { done: 0, total: 0 },
@@ -1704,6 +1705,15 @@ async function loadEntries() {
   const data = await api('/api/entries?' + p.toString());
   state.entries = data.entries;
   state.entryRenderLimit = ENTRY_RENDER_BATCH_SIZE;
+  const filtered = Boolean(state.filterSource || state.filterCategory || (state.q && state.view !== 'assets'));
+  if (!filtered) {
+    state.entriesAll = data.entries;
+  } else if (!state.entriesAll) {
+    api('/api/entries').then(unfiltered => {
+      state.entriesAll = unfiltered.entries;
+      renderSidebar();
+    }).catch(() => {});
+  }
 }
 async function loadContributors() {
   const p = new URLSearchParams({ limit: '200' });
@@ -1748,7 +1758,6 @@ function formatCompactCount(value) {
 function entryStatsLabel(entry) {
   const stats = entryStats(entry);
   return [
-    stats.viewCount ? `阅 ${formatCompactCount(stats.viewCount)}` : '',
     stats.favoriteCount ? `藏 ${formatCompactCount(stats.favoriteCount)}` : '',
     stats.likeCount ? `赞 ${formatCompactCount(stats.likeCount)}` : '',
     stats.dislikeCount ? `负反馈 ${formatCompactCount(stats.dislikeCount)}` : '',
@@ -1950,8 +1959,8 @@ async function loadMe() {
 }
 
 /* ---------- Sidebar ---------- */
-function unreadCountFor(pred) {
-  return state.entries.filter(e => isEntrySourceEnabled(e) && pred(e) && !state.read.has(e.id)).length;
+function unreadCountFor(pred, base = state.entries) {
+  return base.filter(e => isEntrySourceEnabled(e) && pred(e) && !state.read.has(e.id)).length;
 }
 
 function renderSidebar() {
@@ -1959,6 +1968,7 @@ function renderSidebar() {
   const groups = { article: [], news: [], podcast: [] };
   for (const s of state.sources) if (s.enabled) groups[s.category]?.push(s);
 
+  const unreadBase = state.entriesAll || state.entries;
   const wrap = $('#feed-groups');
   wrap.innerHTML = '';
   for (const [cat, list] of Object.entries(groups)) {
@@ -1974,7 +1984,7 @@ function renderSidebar() {
     for (const s of list) {
       const row = document.createElement('div');
       row.className = 'feed-row' + (state.filterSource === s.id ? ' active' : '');
-      const unread = unreadCountFor(e => e.sourceId === s.id);
+      const unread = unreadCountFor(e => e.sourceId === s.id, unreadBase);
       row.innerHTML = `
         ${s.manual ? '' : `<div class="feed-item-actions" inert>
           <button type="button" class="feed-action feed-pin${s.pinned ? ' pinned' : ''}" data-feed-action="pin" data-id="${escapeHtml(s.id)}" aria-label="${s.pinned ? '取消置顶' : '置顶到最爱'}">${iconMarkup('pin')}</button>
@@ -1986,7 +1996,7 @@ function renderSidebar() {
             <span class="fname" title="${escapeHtml(s.name)}">${escapeHtml(s.name)}</span>
             ${s.pinned ? '<span class="pin-mark" title="已置顶">' + iconMarkup('pin') + '</span>' : ''}
             ${s.status === 'error' ? '<span class="err-dot" title="抓取失败"></span>' : ''}
-            <span class="fcount">${unread || ''}</span>
+            <span class="fcount">${feedCountMarkup(unread)}</span>
           </button>
           ${s.manual ? '' : `<button type="button" class="feed-more" data-feed-action="more" data-id="${escapeHtml(s.id)}" aria-label="管理${escapeHtml(s.name)}" title="管理订阅" aria-haspopup="menu" aria-expanded="false">${iconMarkup('ellipsis')}</button>`}
         </div>`;
@@ -2154,6 +2164,12 @@ function visibleEntries() {
       .sort(compareAssetEntries);
   }
   return list;
+}
+
+function feedCountMarkup(unread) {
+  const n = Number(unread) || 0;
+  if (!n) return `<span class="fcount-done" title="全部已读">${iconMarkup('check-check')}</span>`;
+  return n > 99 ? '99' : String(n).padStart(2, '0');
 }
 
 function sourceById(id) { return state.sources.find(s => s.id === id); }
@@ -2696,23 +2712,6 @@ function isHomeScope() {
 
 function homeAssetActivityItems(limit = 24) {
   return latestAssetActivity(limit).filter(item => item.type);
-}
-
-function renderEntryPaneTabs() {
-  const tabs = $('#entry-pane-tabs');
-  if (!tabs) return;
-  const show = isHomeScope() && state.entries.length > 0;
-  tabs.classList.toggle('hidden', !show);
-  if (!show) return;
-  const assetCount = homeAssetActivityItems(1000).length;
-  const entryCount = state.entries.filter(isEntrySourceEnabled).length;
-  $('#home-entry-count').textContent = entryCount;
-  $('#home-asset-count').textContent = assetCount;
-  $$('#entry-pane-tabs [data-home-tab]').forEach(btn => {
-    const active = btn.dataset.homeTab === state.homeTab;
-    btn.classList.toggle('active', active);
-    btn.setAttribute('aria-selected', active ? 'true' : 'false');
-  });
 }
 
 function currentListScope() {
@@ -3337,7 +3336,6 @@ function renderPersonalIdentityState() {
       ${avatarHtml(state.me, 'account-avatar')}
       <span class="account-text">
         <strong>${escapeHtml(state.me.displayName || '读者')}</strong>
-        <span>${escapeHtml(isAdmin() ? '管理员' : '个人后台')}</span>
       </span>
     `;
     $('#account-info').title = '打开个人后台';
@@ -3499,7 +3497,6 @@ function renderList() {
   $('#app').classList.toggle('view-favorites', state.view === 'favorites');
   $('#app').classList.toggle('home-assets', isHomeScope() && state.homeTab === 'assets');
   renderListScopeBar();
-  renderEntryPaneTabs();
   $('#mark-read-btn').classList.toggle('hidden', isHomeScope() && state.homeTab === 'assets');
   const list = visibleEntries();
   const el = $('#entry-list');
@@ -6439,7 +6436,7 @@ function rssLatestArticleHtml(source) {
   const date = Date.parse(article.published);
   const title = article.title || '无标题';
   const chars = Array.from(title);
-  const shortTitle = chars.slice(0, 10).join('') + (chars.length > 10 ? '...' : '');
+  const shortTitle = chars.slice(0, 50).join('') + (chars.length > 50 ? '...' : '');
   return `<div class="rss-latest-article" title="${escapeHtml(title)}"><time>${Number.isFinite(date) ? escapeHtml(new Date(date).toLocaleDateString('zh-CN')) : '发布日期未知'}</time>：${escapeHtml(shortTitle)}</div>`;
 }
 
@@ -9519,13 +9516,6 @@ $('#asset-activity-strip').onclick = async (e) => {
   }
   const btn = e.target.closest('[data-asset-entry]');
   await openAssetActivityButton(btn);
-};
-$('#entry-pane-tabs').onclick = (e) => {
-  const btn = e.target.closest('[data-home-tab]');
-  if (!btn) return;
-  state.homeTab = btn.dataset.homeTab === 'assets' ? 'assets' : 'entries';
-  storage.setItem('qm_home_tab', state.homeTab);
-  renderList();
 };
 $('#list-scope-bar').onclick = (e) => {
   const btn = e.target.closest('[data-list-scope]');

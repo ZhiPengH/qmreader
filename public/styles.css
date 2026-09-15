@@ -412,10 +412,8 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
 }
 .brand-logo {
   width: 30px; height: 30px; border-radius: 9px;
-  background: var(--brand-logo-bg);
-  color: var(--brand-logo-fg); font-weight: 800; font-size: 17px;
-  display: flex; align-items: center; justify-content: center;
-  border: 1px solid color-mix(in srgb, var(--brand-logo-fg) 16%, transparent);
+  display: block;
+  object-fit: cover;
   box-shadow: 0 1px 2px var(--shadow);
   transition: transform 0.16s ease, box-shadow 0.16s ease;
   flex: none;
@@ -1924,9 +1922,8 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
 }
 .empty-logo {
   width: 64px; height: 64px; border-radius: 20px;
-  background: var(--bg-2); color: var(--text-2);
-  font-size: 34px; font-weight: 800;
-  display: flex; align-items: center; justify-content: center;
+  display: block;
+  object-fit: cover;
 }
 .hidden { display: none !important; }
 
@@ -8999,3 +8996,8 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   .feed-row .feed-more { display: none; }
   .feed-row .feed-item { flex: 1; width: 100%; min-width: 0; }
 }
+
+/* Feed unread counts: icon when done, padded numerals otherwise. */
+.fcount-done { display: inline-flex; color: var(--text-3); }
+.fcount-done .app-icon { width: 13px; height: 13px; }
+img.brand-logo, img.empty-logo { border: 0; }

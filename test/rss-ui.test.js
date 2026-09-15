@@ -137,10 +137,11 @@ test('inactive toggle filters dated sources and sorts oldest first without alter
   c.toggleInactiveRssSources(); assert.equal(c.state.rssInactiveOnly, true);
   c.toggleInactiveRssSources(); assert.equal(c.state.rssInactiveOnly, false);
 });
-test('article summary truncates to ten unicode characters with date first', () => {
+test('article summary truncates to fifty unicode characters with date first', () => {
   const { context: c } = harness();
-  const html = c.rssLatestArticleHtml({latestArticle:{title:'一二三四五六七八九十十一',published:'2026-08-24'}});
-  assert.match(html, /<\/time>：一二三四五六七八九十\.\.\./);
+  const long = '一二三四五六七八九十'.repeat(5) + '多余';
+  const html = c.rssLatestArticleHtml({latestArticle:{title:long,published:'2026-08-24'}});
+  assert.match(html, /<\/time>：一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十\.\.\./);
   assert(!html.includes('最新文章'));
   assert(!c.rssLatestArticleHtml({latestArticle:{title:'短标题'}}).includes('...'));
 });
@@ -198,4 +199,12 @@ test('source swipe separates scrolling, full rows, compact rail menus and cancel
   assert.equal(h.opened[0][0], 'source'); assert.equal(h.main.style.transform, ''); assert.equal(h.actions.inert, true);
   h = setup(220); h.handlers.touchstart(h.event(150, 20)); h.handlers.touchmove(h.event(65, 21)); h.handlers.touchcancel();
   assert.equal(h.flags.size, 0); assert.equal(h.actions.inert, true); assert.equal(h.main.style.transition, '');
+});
+
+test('sidebar unread counts fall back to a cached unfiltered base', () => {
+  const section = (start, end) => source.slice(source.indexOf(start), source.indexOf(end, source.indexOf(start)));
+  const c = vm.createContext({ state: { entries: [{ id: 'a', sourceId: 's1' }], entriesAll: [{ id: 'a', sourceId: 's1' }, { id: 'b', sourceId: 's2' }, { id: 'c', sourceId: 's2' }], read: new Set(['b']) }, isEntrySourceEnabled: () => true });
+  vm.runInContext(section('function unreadCountFor(', 'function renderSidebar('), c);
+  assert.equal(c.unreadCountFor(e => e.sourceId === 's2', c.state.entriesAll), 1);
+  assert.equal(c.unreadCountFor(e => e.sourceId === 's2'), 0);
 });
