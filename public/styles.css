@@ -622,8 +622,60 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   display: flex; align-items: center; justify-content: center;
 }
 .feed-item .fname { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.feed-item .fcount { font-size: 11px; color: var(--text-2); font-variant-numeric: tabular-nums; }
+.feed-item .fcount { font-size: 11px; color: var(--text-2); font-variant-numeric: tabular-nums; transition: opacity .15s ease; }
 .feed-item .err-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--semantic-red); flex: none; }
+.feed-row { position: relative; border-radius: var(--radius-md); overflow: hidden; }
+.feed-item-main { position: relative; z-index: 1; display: flex; align-items: center; background: var(--bg-0); transition: transform .16s ease; }
+.feed-row .feed-item { flex: 1; min-width: 0; width: auto; background: transparent; }
+.feed-item-main:hover, .feed-row.menu-open .feed-item-main { background: var(--bg-2); }
+.feed-row.active .feed-item-main { background: var(--accent-soft); }
+.feed-row.active .feed-item { color: var(--accent); font-weight: 600; }
+.feed-more { flex: 0 0 28px; height: 28px; padding: 0; margin-right: 4px; border: 0; border-radius: 6px; display: grid; place-items: center; background: transparent; color: var(--text-2); cursor: pointer; opacity: 0; transition: opacity .12s ease; }
+.feed-more .app-icon { width: 14px; height: 14px; }
+.feed-row:hover .feed-more, .feed-row:has(:focus-visible) .feed-more, .feed-row.menu-open .feed-more { opacity: 1; }
+.feed-more:hover, .feed-more[aria-expanded="true"] { background: var(--bg-3); color: var(--text-0); }
+.feed-more:focus-visible, .feed-menu button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.feed-item-actions { position: absolute; inset: 0 0 0 auto; display: none; width: 112px; opacity: 0; pointer-events: none; }
+.feed-row.swiped .feed-item-actions { opacity: 1; pointer-events: auto; }
+.feed-action { width: 56px; border: 0; padding: 0; display: grid; place-items: center; color: var(--text-1); background: var(--bg-2); cursor: pointer; }
+.feed-action .app-icon { width: 18px; height: 18px; }
+.feed-pin.pinned { color: var(--accent); }
+.feed-delete { color: var(--semantic-red); background: color-mix(in srgb, var(--semantic-red) 10%, var(--bg-2)); }
+.pin-mark { flex: none; display: inline-flex; color: var(--accent); }
+.pin-mark .app-icon { width: 12px; height: 12px; }
+#app.sidebar-collapsed .feed-more, #app.sidebar-collapsed .feed-item-actions, #app.sidebar-collapsed .pin-mark { display: none; }
+.feed-menu { position: fixed; z-index: 1000; width: 188px; max-width: calc(100vw - 16px); }
+.feed-menu-main, .feed-category-menu { padding: 5px; border: 1px solid var(--border); border-radius: 9px; background: var(--bg-1); box-shadow: 0 6px 22px rgb(0 0 0 / 12%); }
+.feed-menu button { border: 0; border-radius: 5px; background: transparent; color: var(--text-1); font: inherit; font-size: 13px; padding: 0 9px; min-height: 36px; width: 100%; display: flex; align-items: center; gap: 9px; cursor: pointer; text-align: left; }
+.feed-menu button > span { flex: 1; }
+.feed-menu button .app-icon { width: 16px; height: 16px; flex: none; }
+.feed-menu button:hover, .feed-menu button[aria-expanded="true"] { background: var(--bg-2); color: var(--text-0); }
+.feed-menu .feed-menu-delete { color: var(--semantic-red); }
+.feed-menu-separator { height: 1px; background: var(--border); margin: 4px; }
+.feed-category-menu { position: fixed; width: 160px; }
+.feed-category-menu[hidden] { display: none; }
+.feed-menu .feed-category-back { display: none; }
+/* Desktop: reveal the menu slot only while the row is in use. */
+@media (hover: hover) and (pointer: fine) {
+  .feed-more { flex-basis: 0; width: 0; min-width: 0; margin-right: 0; overflow: hidden; pointer-events: none; transition: flex-basis .16s ease, margin-right .16s ease, opacity .12s ease; }
+  .feed-row:hover .feed-more,
+  .feed-row:has(:focus-visible) .feed-more,
+  .feed-row.menu-open .feed-more { flex-basis: 28px; margin-right: 4px; opacity: 1; pointer-events: auto; }
+}
+@media (any-pointer: coarse), (hover: none) {
+  .feed-more { opacity: 1; flex-basis: 44px; height: 44px; margin: 0; }
+  .feed-item-main, .feed-row .feed-item { min-height: 44px; }
+  .feed-item-actions { display: flex; }
+  .feed-menu button { min-height: 44px; }
+}
+@media (max-width: 600px) {
+  .feed-menu.categories-open .feed-menu-main { display: none; }
+  .feed-category-menu { position: static; width: 100%; box-sizing: border-box; }
+  .feed-menu .feed-category-back { display: flex; border-bottom: 1px solid var(--border); border-radius: 0; margin-bottom: 4px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .feed-item-main, .feed-more { transition: none; }
+}
 
 .sidebar-footer {
   padding: 10px; border-top: 1px solid var(--border);
@@ -806,6 +858,7 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
 #app.sidebar-collapsed #theme-toggle,
 #app.sidebar-collapsed .asset-dashboard,
 #app.sidebar-collapsed .feed-item .fname,
+#app.sidebar-collapsed .feed-item .pin-mark,
 #app.sidebar-collapsed .feed-item .fcount,
 #app.sidebar-collapsed .view-label,
 #app.sidebar-collapsed .count,
@@ -6673,6 +6726,7 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   #theme-toggle,
   .brand-name,
   .feed-item .fname,
+  .feed-item .pin-mark,
   .feed-item .fcount,
   .view-label,
   .count,
@@ -6918,6 +6972,7 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   #theme-toggle,
   .brand-name,
   .feed-item .fname,
+  .feed-item .pin-mark,
   .feed-item .fcount,
   .view-label,
   .count,
@@ -7840,6 +7895,7 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   #app.reading #theme-toggle,
   #app.reading .asset-dashboard,
   #app.reading .feed-item .fname,
+  #app.reading .feed-item .pin-mark,
   #app.reading .feed-item .fcount,
   #app.reading .view-label,
   #app.reading .count,
@@ -8712,6 +8768,7 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   #app.reading:not(.sidebar-collapsed):not(.left-collapsed):not(.reader-immersive) .brand-name,
   #app.reading:not(.sidebar-collapsed):not(.left-collapsed):not(.reader-immersive) #theme-toggle,
   #app.reading:not(.sidebar-collapsed):not(.left-collapsed):not(.reader-immersive) .feed-item .fname,
+  #app.reading:not(.sidebar-collapsed):not(.left-collapsed):not(.reader-immersive) .feed-item .pin-mark,
   #app.reading:not(.sidebar-collapsed):not(.left-collapsed):not(.reader-immersive) .feed-item .fcount,
   #app.reading:not(.sidebar-collapsed):not(.left-collapsed):not(.reader-immersive) .view-label,
   #app.reading:not(.sidebar-collapsed):not(.left-collapsed):not(.reader-immersive) .count,
@@ -8936,3 +8993,9 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
 .rss-heading-actions .ghost-btn { flex: 0 0 auto; width: auto; }
 #rss-inactive[aria-pressed="true"] { color: var(--text-0); border-color: var(--text-2); background: var(--bg-2); }
 @media (max-width: 600px) { .rss-heading { flex-wrap: wrap; } }
+
+/* Compact icon rails keep the source tap target intact; left swipe opens its menu. */
+@media (max-width: 860px) {
+  .feed-row .feed-more { display: none; }
+  .feed-row .feed-item { flex: 1; width: 100%; min-width: 0; }
+}

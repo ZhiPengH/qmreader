@@ -157,3 +157,45 @@ test('subscription articles default to original even with rewrite preference, ex
   c.state.filterSource = null;
   assert.equal(c.normalizeReaderOpenTab(null), 'rewrite');
 });
+
+test('sidebar category and pin mutations send JSON and consume persisted response', async () => {
+  const item = { id: 'qiaomu-blog', category: 'article', pinned: false };
+  const requests = [];
+  const c = vm.createContext({
+    sourceById: () => item, CATEGORY_LABELS: { article: '文章', news: '资讯', podcast: '播客' },
+    state: { sources: [item], view: 'favorites' },
+    api: async (url, options) => {
+      assert.equal(options.headers['Content-Type'], 'application/json');
+      requests.push(JSON.parse(options.body));
+      return { source: { ...item, ...JSON.parse(options.body) } };
+    }, renderSidebar() {}, renderList() {}, updateListTitle() {}, toast() {},
+  });
+  vm.runInContext(source.slice(source.indexOf('async function moveSourceCategory('), source.indexOf('async function deleteSourceFromSidebar(')), c);
+  await c.moveSourceCategory(item.id, 'news');
+  assert.equal(item.category, 'news');
+  await c.togglePinSource(item.id);
+  assert.equal(item.pinned, true);
+  assert.deepEqual(requests, [{ category: 'news' }, { pinned: true }]);
+});
+
+test('source swipe separates scrolling, full rows, compact rail menus and cancellation', () => {
+  function setup(width) {
+    const handlers = {}, flags = new Set(), main = { style: {} }, actions = { inert: true }, trigger = { dataset: { id: 'source' } };
+    const row = { dataset: {}, getBoundingClientRect: () => ({ width }), querySelector: s => s === '.feed-item-main' ? main : s === '.feed-item-actions' ? actions : trigger,
+      classList: { contains: k => flags.has(k), toggle: (k, on) => on ? flags.add(k) : flags.delete(k) } };
+    const opened = [];
+    const c = vm.createContext({ $: () => ({ addEventListener: (name, fn) => { handlers[name] = fn; } }), $$: () => flags.has('swiped') ? [row] : [], closeFeedMenu() {}, openFeedMenu: (...args) => opened.push(args), Date });
+    vm.runInContext(source.slice(source.indexOf('const FEED_SWIPE_OPEN'), source.indexOf("$('#rss-import-format').onchange")), c);
+    let prevented = false;
+    const event = (x, y) => ({ target: { closest: s => s === '.feed-row' ? row : null }, touches: [{ clientX: x, clientY: y }], cancelable: true, preventDefault() { prevented = true; } });
+    return { handlers, row, main, actions, flags, opened, event, prevented: () => prevented };
+  }
+  let h = setup(220); h.handlers.touchstart(h.event(150, 20)); h.handlers.touchmove(h.event(65, 21)); h.handlers.touchend();
+  assert(h.flags.has('swiped')); assert.equal(h.main.style.transform, 'translateX(-112px)'); assert.equal(h.actions.inert, false); assert(h.prevented());
+  h = setup(220); h.handlers.touchstart(h.event(150, 20)); h.handlers.touchmove(h.event(147, 60)); h.handlers.touchend();
+  assert.equal(h.prevented(), false); assert.equal(h.flags.size, 0);
+  h = setup(44); h.handlers.touchstart(h.event(35, 20)); h.handlers.touchmove(h.event(10, 21)); h.handlers.touchend();
+  assert.equal(h.opened[0][0], 'source'); assert.equal(h.main.style.transform, ''); assert.equal(h.actions.inert, true);
+  h = setup(220); h.handlers.touchstart(h.event(150, 20)); h.handlers.touchmove(h.event(65, 21)); h.handlers.touchcancel();
+  assert.equal(h.flags.size, 0); assert.equal(h.actions.inert, true); assert.equal(h.main.style.transition, '');
+});

@@ -201,3 +201,38 @@ test('manual submissions cannot be changed through RSS management', async () => 
   }
   assert.equal(fetcher.getSourceById(manual.id).name, manual.name);
 });
+
+test('pin state persists per source and survives process restart', async () => {
+  const source = await subscriptions.createSource({ name: 'Pinned Feed', feeds: ['https://example.com/pin-feed'] }, options);
+  assert.equal(source.pinned, undefined);
+  const pinned = await subscriptions.updateSource(source.id, { pinned: true }, options);
+  assert.equal(pinned.pinned, true);
+  const other = await subscriptions.createSource({ name: 'Other Feed', feeds: ['https://example.com/other-feed'] }, options);
+  const unchanged = subscriptions.getSources().find(item => item.id === other.id);
+  assert.equal(unchanged.pinned, undefined);
+  const meta = fetcher.getSourcesMeta({ includeDeleted: true }).find(item => item.id === source.id);
+  assert.equal(meta.pinned, true);
+  await assert.rejects(subscriptions.updateSource(source.id, { pinned: 'yes' }, options), { statusCode: 400 });
+});
+
+
+test('moving a source through all categories preserves its identity, feeds and pin across restart', async () => {
+  const source = await subscriptions.createSource({ name: 'Move category', feeds: ['https://move.example.com/rss'], enabled: false, pinned: true }, options);
+  for (const category of ['news', 'podcast', 'article']) {
+    const moved = await subscriptions.updateSource(source.id, { category }, options);
+    assert.equal(moved.category, category);
+    assert.equal(moved.id, source.id);
+    assert.equal(moved.pinned, true);
+    assert.equal(moved.enabled, false);
+    assert.deepEqual(moved.feeds, source.feeds);
+    assert.equal(fetcher.getSourcesMeta().find(item => item.id === source.id).category, category);
+  }
+  await subscriptions.updateSource(source.id, { category: 'podcast' }, options);
+  const restarted = spawnSync(process.execPath, ['-e', `process.stdout.write(JSON.stringify(require('./lib/subscriptions').getSources()))`], { cwd: path.join(__dirname, '..'), env: process.env, encoding: 'utf8' });
+  assert.equal(restarted.status, 0, restarted.stderr);
+  const saved = JSON.parse(restarted.stdout).find(item => item.id === source.id);
+  assert.equal(saved.category, 'podcast');
+  assert.equal(saved.pinned, true);
+  await assert.rejects(subscriptions.updateSource(source.id, { category: 'unknown' }, options), { statusCode: 400 });
+  assert.equal(subscriptions.getSources().find(item => item.id === source.id).category, 'podcast');
+});

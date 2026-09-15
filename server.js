@@ -1888,7 +1888,7 @@ app.get('/assets/:type', (req, res) => {
   res.type('html').send(renderIndex(req));
 });
 
-app.get('/contributors', (req, res) => {
+app.get('/favorites', (req, res) => {
   res.setHeader('Cache-Control', 'no-cache');
   res.type('html').send(renderIndex(req));
 });

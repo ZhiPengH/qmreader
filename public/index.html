@@ -7,7 +7,7 @@
   <link rel="alternate" type="application/rss+xml" title="QMReader 公开资产 RSS" href="https://rss.qiaomu.ai/assets.xml" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="shortcut icon" href="/favicon.svg" />
-  <link rel="stylesheet" href="/styles.css?v=159" />
+  <link rel="stylesheet" href="/styles.css?v=160" />
   <meta name="description" content="围绕 RSS 文章沉淀中文翻译、乔木风格重写、人工点评和文章对话的公开阅读站。" />
   <link rel="canonical" href="https://rss.qiaomu.ai/" />
   <meta property="og:site_name" content="QMReader" />
@@ -55,7 +55,7 @@
         <button class="view-btn active" data-view="all"><span class="view-ico" data-qm-icon="newspaper"></span><span class="view-label">全部</span><span class="count" id="count-all"></span></button>
         <button class="view-btn" data-view="unread"><span class="view-ico" data-qm-icon="circle-dot"></span><span class="view-label">未读</span><span class="count" id="count-unread"></span></button>
         <button class="view-btn" data-view="hot"><span class="view-ico" data-qm-icon="flame"></span><span class="view-label">热门</span><span class="count" id="count-hot"></span></button>
-        <button class="view-btn" data-view="contributors"><span class="view-ico" data-qm-icon="users"></span><span class="view-label">贡献榜</span><span class="count" id="count-contributors"></span></button>
+        <button class="view-btn" data-view="favorites"><span class="view-ico" data-qm-icon="pin"></span><span class="view-label">最爱</span><span class="count" id="count-favorites"></span></button>
         <button class="view-btn" data-view="starred"><span class="view-ico" data-qm-icon="star"></span><span class="view-label">收藏</span><span class="count" id="count-starred"></span></button>
         <button class="view-btn" data-view="history"><span class="view-ico" data-qm-icon="history"></span><span class="view-label">历史</span><span class="count" id="count-history"></span></button>
       </div>
@@ -101,9 +101,6 @@
       <div class="account-strip">
         <span id="identity-status" class="account-text" role="status">正在加载个人数据…</span>
         <button id="account-info" class="account-card account-info hidden" type="button"></button>
-        <button id="account-settings-open" class="icon-btn account-settings hidden" type="button" title="账户设置" aria-label="账户设置">
-          <span data-qm-icon="settings"></span><b id="notification-count" class="hidden">0</b>
-        </button>
         <div id="account-menu" class="account-menu hidden" role="menu" aria-label="账户菜单">
           <button id="account-menu-dashboard" type="button" role="menuitem">我的后台</button>
           <button id="account-menu-profile" type="button" role="menuitem">我的贡献</button>
@@ -773,7 +770,7 @@
   <div id="toast" class="toast hidden"></div>
 
   <script src="/purify.min.js?v=3.4.11"></script>
-  <script src="/lucide-icons.js?v=2"></script>
-  <script src="/app.js?v=159"></script>
+  <script src="/lucide-icons.js?v=4"></script>
+  <script src="/app.js?v=161"></script>
 </body>
 </html>

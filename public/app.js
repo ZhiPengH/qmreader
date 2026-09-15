@@ -24,6 +24,7 @@ function readStoredNumber(key) {
 }
 
 const CATEGORY_LABELS = { article: '文章', news: '资讯', podcast: '播客' };
+let feedMenuState = null;
 const READER_TABS = ['original', 'rewrite', 'translation'];
 const READER_NAV_TABS = ['original', 'rewrite'];
 const DEFAULT_READER_OPEN_TAB = 'rewrite';
@@ -728,7 +729,7 @@ const sourceRefreshPolls = new Map();
 function routeStateFromUrl() {
   const params = new URLSearchParams(window.location.search);
   const pathMatch = window.location.pathname.match(/^\/assets(?:\/([^/.]+))?\/?$/);
-  const contributorsPath = /^\/contributors\/?$/.test(window.location.pathname);
+  const favoritesPath = /^\/favorites\/?$/.test(window.location.pathname);
   const contributorMatch = window.location.pathname.match(/^\/contributors\/([^/?#]+)\/?$/);
   const dashboardPath = /^\/(?:me|dashboard)\/?$/.test(window.location.pathname);
   const adminPath = /^\/admin\/?$/.test(window.location.pathname);
@@ -769,10 +770,10 @@ function routeStateFromUrl() {
     contributorAssetType: contributorMatch ? normalizeUserAssetTab(params.get('type')) : 'translation',
     contributorAssetSort: contributorMatch && params.get('sort') === 'helpful' ? 'helpful' : 'latest',
     tab: routeReaderTab,
-    view: contributorsPath ? 'contributors' : (isAssetPath || params.get('view') === 'assets' ? 'assets' : ''),
+    view: favoritesPath ? 'favorites' : (isAssetPath || params.get('view') === 'assets' ? 'assets' : ''),
     assetFilter: isAssetPath ? pathAssetFilter : queryAssetFilter,
     assetSort: params.get('sort') === 'helpful' ? 'helpful' : 'latest',
-    contributorSort: contributorsPath ? normalizeContributorSort(params.get('sort')) : 'latest',
+    contributorSort: 'latest',
     focus: commentId ? 'comments' : annotationId ? 'annotations' : chatMessageId ? 'chat' : focus,
     assetId: pathAssetId || queryAssetId,
     commentId,
@@ -860,9 +861,8 @@ function splitArticleLocator(locator) {
 }
 
 function listRouteTitle(view = state.view, assetFilter = state.assetFilter, q = state.q) {
-  if (view === 'contributors') {
-    const sortPrefix = state.contributorSort === 'helpful' ? '有用 · ' : state.contributorSort === 'assets' ? '资产 · ' : '';
-    return q ? `${sortPrefix}贡献榜 · “${q}” · QMReader` : `${sortPrefix}贡献榜 · QMReader`;
+  if (view === 'favorites') {
+    return q ? `最爱 · “${q}” · QMReader` : '最爱 · QMReader';
   }
   if (view === 'assets') {
     const sortPrefix = state.assetSort === 'helpful' ? '有用 · ' : '';
@@ -1012,10 +1012,9 @@ function listUrlFor(view = state.view, assetFilter = state.assetFilter) {
       : '/assets';
     if (state.q) url.searchParams.set('q', state.q);
     if (state.assetSort === 'helpful') url.searchParams.set('sort', 'helpful');
-  } else if (view === 'contributors') {
-    url.pathname = '/contributors';
+  } else if (view === 'favorites') {
+    url.pathname = '/favorites';
     if (state.q) url.searchParams.set('q', state.q);
-    if (state.contributorSort !== 'latest') url.searchParams.set('sort', state.contributorSort);
   }
   return url;
 }
@@ -1701,7 +1700,7 @@ async function loadEntries() {
   const p = new URLSearchParams();
   if (state.filterSource) p.set('source', state.filterSource);
   if (state.filterCategory) p.set('category', state.filterCategory);
-  if (state.q && state.view !== 'assets' && state.view !== 'contributors') p.set('q', state.q);
+  if (state.q && state.view !== 'assets') p.set('q', state.q);
   const data = await api('/api/entries?' + p.toString());
   state.entries = data.entries;
   state.entryRenderLimit = ENTRY_RENDER_BATCH_SIZE;
@@ -1956,6 +1955,7 @@ function unreadCountFor(pred) {
 }
 
 function renderSidebar() {
+  closeFeedMenu(false);
   const groups = { article: [], news: [], podcast: [] };
   for (const s of state.sources) if (s.enabled) groups[s.category]?.push(s);
 
@@ -1972,15 +1972,30 @@ function renderSidebar() {
     wrap.appendChild(label);
 
     for (const s of list) {
-      const btn = document.createElement('button');
-      btn.className = 'feed-item' + (state.filterSource === s.id ? ' active' : '');
+      const row = document.createElement('div');
+      row.className = 'feed-row' + (state.filterSource === s.id ? ' active' : '');
       const unread = unreadCountFor(e => e.sourceId === s.id);
-      btn.innerHTML = `${faviconHtml(s.siteUrl, s.name)}
-        <span class="fname" title="${escapeHtml(s.name)}">${escapeHtml(s.name)}</span>
-        ${s.status === 'error' ? '<span class="err-dot" title="抓取失败"></span>' : ''}
-        <span class="fcount">${unread || ''}</span>`;
-      btn.onclick = () => selectSource(s.id);
-      wrap.appendChild(btn);
+      row.innerHTML = `
+        ${s.manual ? '' : `<div class="feed-item-actions" inert>
+          <button type="button" class="feed-action feed-pin${s.pinned ? ' pinned' : ''}" data-feed-action="pin" data-id="${escapeHtml(s.id)}" aria-label="${s.pinned ? '取消置顶' : '置顶到最爱'}">${iconMarkup('pin')}</button>
+          <button type="button" class="feed-action feed-delete" data-feed-action="delete" data-id="${escapeHtml(s.id)}" aria-label="删除订阅">${iconMarkup('trash')}</button>
+        </div>`}
+        <div class="feed-item-main">
+          <button type="button" class="feed-item" data-id="${escapeHtml(s.id)}">
+            ${faviconHtml(s.siteUrl, s.name)}
+            <span class="fname" title="${escapeHtml(s.name)}">${escapeHtml(s.name)}</span>
+            ${s.pinned ? '<span class="pin-mark" title="已置顶">' + iconMarkup('pin') + '</span>' : ''}
+            ${s.status === 'error' ? '<span class="err-dot" title="抓取失败"></span>' : ''}
+            <span class="fcount">${unread || ''}</span>
+          </button>
+          ${s.manual ? '' : `<button type="button" class="feed-more" data-feed-action="more" data-id="${escapeHtml(s.id)}" aria-label="管理${escapeHtml(s.name)}" title="管理订阅" aria-haspopup="menu" aria-expanded="false">${iconMarkup('ellipsis')}</button>`}
+        </div>`;
+      row.querySelector('.feed-item').onclick = () => {
+        if (Date.now() < Number(row.dataset.suppressClickUntil || 0)) return;
+        if (row.classList.contains('swiped')) { closeSwipedFeedRows(); return; }
+        selectSource(s.id);
+      };
+      wrap.appendChild(row);
     }
   }
 
@@ -1989,7 +2004,7 @@ function renderSidebar() {
   $('#count-unread').textContent = unreadCountFor(() => true) || '';
   $('#count-starred').textContent = state.starred.size || '';
   $('#count-history').textContent = state.history.size || '';
-  $('#count-contributors').textContent = state.contributors.length || '';
+  $('#count-favorites').textContent = pinnedSourceIds().size || '';
   renderAssetDashboard();
   renderSidebarMore();
 
@@ -2112,6 +2127,7 @@ function visibleContributors() {
 
 function visibleEntries() {
   let list = ['starred', 'history', 'assets'].includes(state.view) ? state.entries : state.entries.filter(isEntrySourceEnabled);
+  if (state.view === 'favorites') list = list.filter(e => pinnedSourceIds().has(e.sourceId));
   if (state.view === 'hot') {
     list = list
       .slice()
@@ -2141,6 +2157,148 @@ function visibleEntries() {
 }
 
 function sourceById(id) { return state.sources.find(s => s.id === id); }
+
+function closeFeedMenu(restoreFocus = true) {
+  if (!feedMenuState) return;
+  const { root, trigger } = feedMenuState;
+  root.remove();
+  trigger.setAttribute('aria-expanded', 'false');
+  trigger.closest('.feed-row')?.classList.remove('menu-open');
+  feedMenuState = null;
+  if (restoreFocus && trigger.isConnected) trigger.focus();
+}
+
+function placeFeedMenu() {
+  if (!feedMenuState) return;
+  const { root, trigger } = feedMenuState;
+  const rect = trigger.getBoundingClientRect();
+  const width = root.offsetWidth;
+  let left = rect.right + 8;
+  if (left + width > innerWidth - 8) left = Math.max(8, rect.left - width - 8);
+  root.style.left = left + 'px';
+  root.style.top = Math.max(8, Math.min(rect.top, innerHeight - root.offsetHeight - 8)) + 'px';
+  const sub = root.querySelector('.feed-category-menu');
+  if (!sub.hidden && !matchMedia('(max-width: 600px)').matches) {
+    const main = root.getBoundingClientRect();
+    const move = root.querySelector('[data-menu-action="move"]').getBoundingClientRect();
+    const subLeft = main.right + sub.offsetWidth + 8 <= innerWidth ? main.right + 4 : main.left - sub.offsetWidth - 4;
+    sub.style.left = Math.max(8, subLeft) + 'px';
+    sub.style.top = Math.max(8, Math.min(move.top, innerHeight - sub.offsetHeight - 8)) + 'px';
+  }
+}
+
+function showFeedCategories(show = true) {
+  if (!feedMenuState) return;
+  const { root } = feedMenuState;
+  root.classList.toggle('categories-open', show);
+  root.querySelector('.feed-category-menu').hidden = !show;
+  const trigger = root.querySelector('[data-menu-action="move"]');
+  trigger.setAttribute('aria-expanded', String(show));
+  placeFeedMenu();
+  (show ? root.querySelector('[data-category]') : trigger)?.focus();
+}
+
+function openFeedMenu(id, trigger) {
+  if (feedMenuState?.trigger === trigger) { closeFeedMenu(); return; }
+  closeFeedMenu(false);
+  closeSwipedFeedRows();
+  const source = sourceById(id);
+  if (!source || source.manual) return;
+  const root = document.createElement('div');
+  root.className = 'feed-menu';
+  root.innerHTML = `<div class="feed-menu-main" role="menu" aria-label="${escapeHtml(source.name)}订阅操作">
+    <button role="menuitem" data-menu-action="pin">${iconMarkup('pin')}<span>${source.pinned ? '取消置顶' : '置顶到最爱'}</span></button>
+    <button role="menuitem" data-menu-action="move" aria-haspopup="menu" aria-expanded="false">${iconMarkup('folder-input')}<span>移动到分类</span>${iconMarkup('chevron-right')}</button>
+    <div class="feed-menu-separator" role="separator"></div>
+    <button role="menuitem" class="feed-menu-delete" data-menu-action="delete">${iconMarkup('trash')}<span>删除订阅</span></button>
+  </div><div class="feed-category-menu" role="menu" aria-label="移动到分类" hidden>
+    <button class="feed-category-back" role="menuitem" data-menu-action="back">${iconMarkup('arrow-left')}<span>返回</span></button>
+    ${Object.entries(CATEGORY_LABELS).map(([key, label]) => `<button role="menuitemradio" aria-checked="${source.category === key}" data-category="${key}"><span>${escapeHtml(label)}</span>${source.category === key ? iconMarkup('check') : ''}</button>`).join('')}
+  </div>`;
+  document.body.appendChild(root);
+  feedMenuState = { root, trigger, id };
+  trigger.setAttribute('aria-expanded', 'true');
+  trigger.closest('.feed-row')?.classList.add('menu-open');
+  placeFeedMenu();
+  root.querySelector('button').focus();
+  root.addEventListener('click', event => {
+    const button = event.target.closest('button');
+    if (!button) return;
+    if (button.dataset.category) {
+      const category = button.dataset.category;
+      closeFeedMenu();
+      moveSourceCategory(id, category);
+      return;
+    }
+    const action = button.dataset.menuAction;
+    if (action === 'move') { showFeedCategories(root.querySelector('.feed-category-menu').hidden); return; }
+    if (action === 'back') { showFeedCategories(false); return; }
+    closeFeedMenu();
+    if (action === 'pin') togglePinSource(id);
+    if (action === 'delete') deleteSourceFromSidebar(id);
+  });
+  root.addEventListener('keydown', event => {
+    if (event.key === 'Tab') { closeFeedMenu(); return; }
+    if (event.key === 'Escape') {
+      event.preventDefault(); event.stopPropagation();
+      if (!root.querySelector('.feed-category-menu').hidden) showFeedCategories(false);
+      else closeFeedMenu();
+      return;
+    }
+    if (event.key === 'ArrowRight' && event.target.dataset.menuAction === 'move') { event.preventDefault(); showFeedCategories(); return; }
+    if (event.key === 'ArrowLeft' && event.target.closest('.feed-category-menu')) { event.preventDefault(); showFeedCategories(false); return; }
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+    event.preventDefault();
+    const panel = event.target.closest('[role="menu"]');
+    const buttons = [...panel.querySelectorAll('button')].filter(button => button.getClientRects().length);
+    let index = buttons.indexOf(document.activeElement);
+    index = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length;
+    buttons[index]?.focus();
+  });
+}
+
+async function moveSourceCategory(id, category) {
+  const source = sourceById(id);
+  if (!source || !Object.hasOwn(CATEGORY_LABELS, category) || source.category === category) return;
+  try {
+    const data = await api('/api/me/sources/' + encodeURIComponent(id), { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ category }) });
+    if (data?.source) Object.assign(source, data.source);
+    renderSidebar();
+    renderList();
+    updateListTitle();
+    toast('已移动到' + CATEGORY_LABELS[category]);
+  } catch (error) { toast('移动失败：' + error.message); }
+}
+
+function pinnedSourceIds() {
+  return new Set(state.sources.filter(s => s.pinned && s.enabled && !s.deleted).map(s => s.id));
+}
+
+async function togglePinSource(id) {
+  const source = sourceById(id);
+  if (!source) return;
+  try {
+    const data = await api('/api/me/sources/' + encodeURIComponent(id), { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pinned: !source.pinned }) });
+    if (data && data.source) Object.assign(source, data.source);
+    renderSidebar();
+    if (state.view === 'favorites') { renderList(); updateListTitle(); }
+  } catch (error) {
+    toast('置顶失败：' + error.message);
+  }
+}
+
+async function deleteSourceFromSidebar(id) {
+  const source = sourceById(id);
+  if (!source) return;
+  if (!confirm(`删除“${source.name}”？将停止抓取并从订阅列表隐藏，已有文章、收藏和阅读历史都会保留。之后可以在个人后台“已删除的订阅源”中恢复。`)) return;
+  try {
+    await api('/api/me/sources/' + encodeURIComponent(id), { method: 'DELETE' });
+    if (state.filterSource === id) state.filterSource = null;
+    await reload();
+  } catch (error) {
+    toast('删除失败：' + error.message);
+  }
+}
 
 function entryAssetItems(entry) {
   const assets = entry && entry.assets ? entry.assets : {};
@@ -2566,7 +2724,7 @@ function currentListScope() {
 function renderListScopeBar() {
   const bar = $('#list-scope-bar');
   if (!bar) return;
-  const hidden = state.view === 'contributors';
+  const hidden = state.view === 'favorites';
   bar.classList.toggle('hidden', hidden);
   if (hidden) return;
   const active = currentListScope();
@@ -2591,7 +2749,7 @@ function selectListScope(scope = 'latest') {
   state.contributorSort = 'latest';
   state.readerFocus = null;
   state.readerAssetId = '';
-  if ((state.view === 'assets' || state.view === 'contributors') && !state.filterSource && !state.filterCategory) {
+  if ((state.view === 'assets' || state.view === 'favorites') && !state.filterSource && !state.filterCategory) {
     syncListUrl();
     reload({ clearUrl: false });
     return;
@@ -3338,15 +3496,11 @@ function renderContributorDirectory() {
 
 function renderList() {
   $('#app').classList.toggle('view-assets', state.view === 'assets');
-  $('#app').classList.toggle('view-contributors', state.view === 'contributors');
+  $('#app').classList.toggle('view-favorites', state.view === 'favorites');
   $('#app').classList.toggle('home-assets', isHomeScope() && state.homeTab === 'assets');
   renderListScopeBar();
   renderEntryPaneTabs();
-  $('#mark-read-btn').classList.toggle('hidden', state.view === 'contributors' || (isHomeScope() && state.homeTab === 'assets'));
-  if (state.view === 'contributors') {
-    renderContributorDirectory();
-    return;
-  }
+  $('#mark-read-btn').classList.toggle('hidden', isHomeScope() && state.homeTab === 'assets');
   const list = visibleEntries();
   const el = $('#entry-list');
   el.innerHTML = '';
@@ -3368,6 +3522,8 @@ function renderList() {
       ? '还没有浏览记录<br/>打开几篇文章后会出现在这里'
       : state.view === 'hot'
       ? '还没有足够反馈<br/>提交链接、点赞或收藏后会逐步形成热门列表'
+      : state.view === 'favorites'
+      ? '还没有置顶的订阅源<br/>点击订阅源“…”或左滑，置顶到最爱'
       : '这里空空如也<br/>试试刷新或切换视图';
     el.innerHTML = `<div class="list-empty">${text}</div>`;
     return;
@@ -3498,7 +3654,7 @@ function updateListTitle() {
     const prefix = state.assetSort === 'helpful' ? '有用 · ' : '';
     title = `${prefix}${state.assetFilter ? `${assetDirectoryLabel(state.assetFilter)}资产` : '公开资产'}`;
   }
-  else if (state.view === 'contributors') title = '贡献榜';
+  else if (state.view === 'favorites') title = '最爱';
   if (state.q) title += ` · “${state.q}”`;
   $('#list-title').textContent = title;
   updateSearchPlaceholder();
@@ -3508,7 +3664,7 @@ function updateListTitle() {
 function updateSearchPlaceholder() {
   const search = $('#search');
   if (!search) return;
-  search.placeholder = state.view === 'contributors' ? '搜索贡献榜…' : state.view === 'assets' ? '搜索资产…' : '搜索文章…';
+  search.placeholder = state.view === 'assets' ? '搜索资产…' : '搜索文章…';
   if (search.value !== state.q) search.value = state.q;
 }
 
@@ -7919,13 +8075,13 @@ async function openEntryFromUrl({ reuseLoadedCollections = false } = {}) {
   }
   setWorkspacePage('');
   if (!route.entryId) {
-    if (route.view === 'contributors') {
-      state.view = 'contributors';
+    if (route.view === 'favorites') {
+      state.view = 'favorites';
       state.filterSource = null;
       state.filterCategory = null;
       state.assetFilter = null;
       state.assetSort = 'latest';
-      state.contributorSort = route.contributorSort;
+      state.contributorSort = 'latest';
       state.q = route.q;
     } else if (route.view === 'assets') {
       state.view = 'assets';
@@ -7953,7 +8109,7 @@ async function openEntryFromUrl({ reuseLoadedCollections = false } = {}) {
     renderList();
     renderSidebar();
     closeReaderFromRoute({ rerenderList: false });
-    if (route.view === 'assets' || route.view === 'contributors') document.title = listRouteTitle();
+    if (route.view === 'assets' || route.view === 'favorites') document.title = listRouteTitle();
     return false;
   }
   try {
@@ -8036,8 +8192,7 @@ function selectView(v) {
   state.readerFocus = null;
   state.readerAssetId = '';
   if (v !== 'assets') state.assetSort = 'latest';
-  if (v !== 'contributors') state.contributorSort = 'latest';
-  if (v === 'assets' || v === 'contributors') {
+  if (v === 'assets' || v === 'favorites') {
     syncListUrl();
     reload({ clearUrl: false });
     return;
@@ -9810,10 +9965,10 @@ if (translationProfileSelect) translationProfileSelect.onchange = (e) => setAiPr
 const rewriteProfileSelect = $('#rewrite-profile-select');
 if (rewriteProfileSelect) rewriteProfileSelect.onchange = (e) => setAiProfileForPurpose('rewrite', e.target.value);
 $('#account-info').onclick = () => openMyCommentsModal({ tab: 'profile' });
-$('#account-settings-open').onclick = (e) => {
+$('#account-settings-open')?.addEventListener('click', (e) => {
   e.stopPropagation();
   toggleAccountMenu();
-};
+});
 $('#account-menu-dashboard').onclick = () => {
   setAccountMenuOpen(false);
   openMyCommentsModal({ tab: 'profile' });
@@ -9905,6 +10060,82 @@ $('#rss-reload').onclick = loadRssSources;
 $('#rss-inactive').onclick = toggleInactiveRssSources;
 $('#rss-source-list').onclick = handleRssAction;
 $('#rss-deleted-list').onclick = handleRssAction;
+
+$('#feed-groups').addEventListener('click', event => {
+  const btn = event.target.closest('[data-feed-action]');
+  if (!btn) return;
+  event.stopPropagation();
+  if (btn.dataset.feedAction === 'more') openFeedMenu(btn.dataset.id, btn);
+  else if (btn.dataset.feedAction === 'pin') { closeSwipedFeedRows(); togglePinSource(btn.dataset.id); }
+  else if (btn.dataset.feedAction === 'delete') { closeSwipedFeedRows(); deleteSourceFromSidebar(btn.dataset.id); }
+});
+document.addEventListener('pointerdown', event => {
+  if (feedMenuState && !feedMenuState.root.contains(event.target) && !feedMenuState.trigger.contains(event.target)) closeFeedMenu(false);
+  if (!event.target.closest('.feed-row')) closeSwipedFeedRows();
+});
+window.addEventListener('resize', () => { closeFeedMenu(false); closeSwipedFeedRows(); });
+$('#feed-groups').addEventListener('scroll', () => closeFeedMenu(false), { passive: true });
+
+const FEED_SWIPE_OPEN = 112;
+let feedSwipeState = null;
+const feedGroupsEl = $('#feed-groups');
+function setFeedSwipe(row, offset, open) {
+  row.querySelector('.feed-item-main').style.transform = offset ? 'translateX(' + offset + 'px)' : '';
+  row.classList.toggle('swiped', open);
+  const actions = row.querySelector('.feed-item-actions');
+  if (actions) actions.inert = !open;
+}
+feedGroupsEl.addEventListener('touchstart', event => {
+  const row = event.target.closest('.feed-row');
+  if (!row || !row.querySelector('.feed-item-actions') || event.target.closest('[data-feed-action]') || event.touches.length !== 1) return;
+  closeFeedMenu(false);
+  closeSwipedFeedRows(row);
+  const item = row.querySelector('.feed-item-main');
+  feedSwipeState = { row, item, x: event.touches[0].clientX, y: event.touches[0].clientY, open: row.classList.contains('swiped'), lock: false, moved: false, offset: 0, compact: row.getBoundingClientRect().width < FEED_SWIPE_OPEN };
+  item.style.transition = 'none';
+}, { passive: true });
+feedGroupsEl.addEventListener('touchmove', event => {
+  if (!feedSwipeState) return;
+  const dx = event.touches[0].clientX - feedSwipeState.x;
+  const dy = event.touches[0].clientY - feedSwipeState.y;
+  if (!feedSwipeState.lock) {
+    if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+    if (Math.abs(dy) >= Math.abs(dx)) { feedSwipeState.item.style.transition = ''; feedSwipeState = null; return; }
+    feedSwipeState.lock = true;
+  }
+  if (event.cancelable) event.preventDefault();
+  feedSwipeState.moved = true;
+  const base = feedSwipeState.open ? -FEED_SWIPE_OPEN : 0;
+  feedSwipeState.offset = Math.min(0, Math.max(-FEED_SWIPE_OPEN, base + dx));
+  if (!feedSwipeState.compact) setFeedSwipe(feedSwipeState.row, feedSwipeState.offset, true);
+}, { passive: false });
+feedGroupsEl.addEventListener('touchend', () => {
+  if (!feedSwipeState) return;
+  const { row, item, moved, offset, compact } = feedSwipeState;
+  item.style.transition = '';
+  if (moved) {
+    const open = offset < -(compact ? 20 : FEED_SWIPE_OPEN * 0.5);
+    setFeedSwipe(row, !compact && open ? -FEED_SWIPE_OPEN : 0, !compact && open);
+    if (compact && open) {
+      const trigger = row.querySelector('.feed-item');
+      openFeedMenu(trigger.dataset.id, trigger);
+    }
+    row.dataset.suppressClickUntil = String(Date.now() + 350);
+  }
+  feedSwipeState = null;
+});
+feedGroupsEl.addEventListener('touchcancel', () => {
+  if (feedSwipeState) {
+    feedSwipeState.item.style.transition = '';
+    setFeedSwipe(feedSwipeState.row, 0, false);
+    feedSwipeState = null;
+  }
+});
+function closeSwipedFeedRows(except) {
+  $$('.feed-row.swiped').forEach(row => {
+    if (row !== except) setFeedSwipe(row, 0, false);
+  });
+}
 $('#rss-import-format').onchange = () => {
   const opml = $('#rss-import-format').value === 'opml';
   $('#rss-file-label').classList.toggle('hidden', !opml);
@@ -10045,7 +10276,7 @@ $('#search').oninput = (e) => {
   clearTimeout(searchTimer);
   searchTimer = setTimeout(() => {
     state.q = e.target.value.trim();
-    if (state.view === 'assets' || state.view === 'contributors') {
+    if (state.view === 'assets' || state.view === 'favorites') {
       syncListUrl({ replace: true });
       reload({ clearUrl: false });
       return;
