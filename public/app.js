@@ -27,7 +27,7 @@ const CATEGORY_LABELS = { article: '文章', news: '资讯', podcast: '播客' }
 let feedMenuState = null;
 const READER_TABS = ['original', 'rewrite', 'translation'];
 const READER_NAV_TABS = ['original', 'rewrite'];
-const DEFAULT_READER_OPEN_TAB = 'rewrite';
+const DEFAULT_READER_OPEN_TAB = 'original';
 const READER_OPEN_TABS = ['rewrite', 'original'];
 const ASSET_FILTER_TYPES = ['translation', 'rewrite', 'annotations', 'comments', 'chat'];
 const PROFILE_TAB_TYPES = [...ASSET_FILTER_TYPES, 'likes'];
@@ -1967,7 +1967,7 @@ function unreadCountFor(pred, base = state.entries) {
 function renderSidebar() {
   closeFeedMenu(false);
   const groups = { article: [], news: [], podcast: [] };
-  for (const s of state.sources) if (s.enabled) groups[s.category]?.push(s);
+  for (const s of state.sources) if (s.enabled && !s.manual) groups[s.category]?.push(s);
 
   const unreadBase = state.entriesAll || state.entries;
   const wrap = $('#feed-groups');
