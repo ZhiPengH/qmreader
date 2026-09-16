@@ -617,6 +617,7 @@ const state = {
   sources: [],
   entries: [],
   entriesAll: null,
+  feedDrawerOpen: false,
   entryRenderLimit: ENTRY_RENDER_BATCH_SIZE,
   contributors: [],
   adminSubmissionUsers: [],
@@ -6600,7 +6601,7 @@ async function submitRssImport(event) {
 
 function renderDashboardTabs() {
   const tab = normalizeDashboardTab(state.dashboardTab);
-  $$('#my-dashboard-page [data-dashboard-tab]').forEach(btn => {
+$$('#my-dashboard-page [data-dashboard-tab]').forEach(btn => {
     const active = btn.dataset.dashboardTab === tab;
     btn.classList.toggle('active', active);
     btn.setAttribute('aria-selected', active ? 'true' : 'false');
@@ -9464,7 +9465,10 @@ if (navMoreToggle) navMoreToggle.onclick = () => {
   storage.setItem('qm_sidebar_more_open', state.sidebarMoreOpen ? '1' : '0');
   renderSidebarMore();
 };
-$('#sidebar-toggle').onclick = () => setSidebarCollapsed(!state.sidebarCollapsed);
+$('#sidebar-toggle').onclick = () => {
+  if (isFeedDrawerViewport()) setFeedDrawer(!state.feedDrawerOpen);
+  else setSidebarCollapsed(!state.sidebarCollapsed);
+};
 const leftCollapseToggle = $('#left-collapse-toggle');
 if (leftCollapseToggle) {
   leftCollapseToggle.onclick = () => {
@@ -10063,7 +10067,7 @@ document.addEventListener('pointerdown', event => {
   if (feedMenuState && !feedMenuState.root.contains(event.target) && !feedMenuState.trigger.contains(event.target)) closeFeedMenu(false);
   if (!event.target.closest('.feed-row')) closeSwipedFeedRows();
 });
-window.addEventListener('resize', () => { closeFeedMenu(false); closeSwipedFeedRows(); });
+window.addEventListener('resize', () => { closeFeedMenu(false); closeSwipedFeedRows(); if (state.feedDrawerOpen && !isFeedDrawerViewport()) setFeedDrawer(false); });
 $('#feed-groups').addEventListener('scroll', () => closeFeedMenu(false), { passive: true });
 
 const FEED_SWIPE_OPEN = 112;
@@ -10131,6 +10135,59 @@ $('#rss-import-format').onchange = () => {
   $('#rss-file-label').classList.toggle('hidden', !opml);
   $('#rss-urls-label').classList.toggle('hidden', opml);
 };
+function isFeedDrawerViewport() {
+  return Boolean(window.matchMedia && window.matchMedia('(max-width: 860px)').matches && !$('#app').classList.contains('reading'));
+}
+
+let feedDrawerScrim = null;
+function setFeedDrawer(open) {
+  state.feedDrawerOpen = open;
+  $('#app').classList.toggle('feed-drawer-open', open);
+  const toggle = $('#sidebar-toggle');
+  if (toggle) {
+    toggle.setAttribute('aria-expanded', String(open));
+    const label = open ? '收起订阅列表' : '展开订阅列表';
+    toggle.title = label;
+    toggle.setAttribute('aria-label', label);
+  }
+  const closeBtn = $('#feed-drawer-close');
+  if (closeBtn) closeBtn.hidden = !open;
+  feedDrawerScrim?.remove();
+  feedDrawerScrim = null;
+  if (open) {
+    feedDrawerScrim = document.createElement('div');
+    feedDrawerScrim.className = 'feed-drawer-scrim';
+    feedDrawerScrim.addEventListener('pointerdown', event => { event.preventDefault(); setFeedDrawer(false); });
+    feedDrawerScrim.addEventListener('click', () => setFeedDrawer(false));
+    document.body.appendChild(feedDrawerScrim);
+  } else if (feedDrawerScrim) {
+    feedDrawerScrim.remove();
+    feedDrawerScrim = null;
+    closeFeedMenu(false);
+  }
+}
+
+$('#feed-drawer-close').onclick = () => setFeedDrawer(false);
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && state.feedDrawerOpen && !feedMenuState) setFeedDrawer(false);
+});
+$('#sidebar').addEventListener('click', event => {
+  if (!state.feedDrawerOpen) return;
+  if (event.target.closest('.feed-item, .view-btn, .group-label, #submit-link-open, #brand-home, #account-info')) setFeedDrawer(false);
+});
+let feedDrawerTouch = null;
+$('#sidebar').addEventListener('touchstart', event => {
+  if (!state.feedDrawerOpen || event.touches.length !== 1) return;
+  feedDrawerTouch = { x: event.touches[0].clientX, y: event.touches[0].clientY };
+}, { passive: true });
+$('#sidebar').addEventListener('touchend', event => {
+  if (!state.feedDrawerOpen || !feedDrawerTouch) { feedDrawerTouch = null; return; }
+  const touch = event.changedTouches[0];
+  const dx = touch.clientX - feedDrawerTouch.x;
+  const dy = touch.clientY - feedDrawerTouch.y;
+  feedDrawerTouch = null;
+  if (dx > 60 && Math.abs(dx) > Math.abs(dy)) setFeedDrawer(false);
+}, { passive: true });
 $$('#my-dashboard-page [data-dashboard-tab]').forEach(btn => {
   btn.onclick = () => setDashboardTab(btn.dataset.dashboardTab, { push: true });
 });

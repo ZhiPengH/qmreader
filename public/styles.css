@@ -9001,3 +9001,30 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
 .fcount-done { display: inline-flex; color: var(--text-3); }
 .fcount-done .app-icon { width: 13px; height: 13px; }
 img.brand-logo, img.empty-logo { border: 0; }
+
+/* Mobile feed drawer: the sidebar overlays content while the icon rail stays available when closed. */
+.feed-drawer-scrim { position: fixed; inset: 0; z-index: 1180; background: rgb(0 0 0 / 0.45); }
+.feed-drawer-close[hidden] { display: none !important; }
+@media (max-width: 860px) {
+  #app.feed-drawer-open #sidebar {
+    position: fixed; top: 0; bottom: 0; left: 0; z-index: 1200;
+    width: min(85vw, 340px);
+    background: var(--bg-1);
+    border-right: 1px solid var(--border);
+    box-shadow: 0 12px 40px rgb(0 0 0 / 0.25);
+  }
+  #app.feed-drawer-open .brand { flex-direction: row; justify-content: space-between; padding: 12px; }
+  #app.feed-drawer-open .brand-home { width: auto; height: auto; }
+  #app.feed-drawer-open #theme-toggle { display: inline-flex; }
+  #app.feed-drawer-open .feed-item .fname { display: block; }
+  #app.feed-drawer-open .feed-item .fcount { display: inline; }
+  #app.feed-drawer-open .feed-item .pin-mark { display: inline-flex; }
+  #app.feed-drawer-open .view-label { display: inline; }
+  #app.feed-drawer-open .count { display: inline; }
+  #app.feed-drawer-open .group-label { display: block; }
+  #app.feed-drawer-open .view-btn,
+  #app.feed-drawer-open .feed-item { justify-content: flex-start; padding-left: 10px; padding-right: 10px; }
+  #app.feed-drawer-open .sidebar-submit-link { width: auto; }
+  #app.feed-drawer-open .sidebar-submit-link .submit-label { display: inline; }
+  #app.feed-drawer-open .account-info { display: flex; }
+}
