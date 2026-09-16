@@ -1808,7 +1808,7 @@ app.get('/', (req, res) => {
   const entryId = String(req.query.entry || '').trim();
   const entry = entryId ? fetcher.getEntryById(entryId) : null;
   if (entry) return res.redirect(301, entryPublicUrl(req, entry));
-  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Cache-Control', 'no-store');
   res.type('html').send(renderIndex(req, entry));
 });
 
@@ -1820,7 +1820,7 @@ app.get(/^\/articles\/.+$/, (req, res) => {
   if (normalizePathForCompare(req.path) !== normalizePathForCompare(canonicalPath)) {
     return res.redirect(301, publicUrl(req, canonicalPath));
   }
-  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Cache-Control', 'no-store');
   res.type('html').send(renderIndex(req, entry));
 });
 
@@ -1905,19 +1905,19 @@ app.get('/assets/:type.xml', (req, res) => {
 });
 
 app.get('/assets', (req, res) => {
-  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Cache-Control', 'no-store');
   res.type('html').send(renderIndex(req));
 });
 
 app.get('/assets/:type', (req, res) => {
   const type = normalizeAssetDirectoryType(String(req.params.type || ''));
   if (!type) return res.status(404).type('text/plain').send('Not found');
-  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Cache-Control', 'no-store');
   res.type('html').send(renderIndex(req));
 });
 
 app.get('/favorites', (req, res) => {
-  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Cache-Control', 'no-store');
   res.type('html').send(renderIndex(req));
 });
 
@@ -1929,24 +1929,24 @@ app.get('/contributors/:id.xml', (req, res) => {
 });
 
 app.get('/contributors/:id', (req, res) => {
-  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Cache-Control', 'no-store');
   res.type('html').send(renderIndex(req));
 });
 
 app.get(['/me', '/dashboard', '/admin'], (req, res) => {
-  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Cache-Control', 'no-store');
   res.type('html').send(renderIndex(req));
 });
 
 app.get('/index.html', (req, res) => {
-  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Cache-Control', 'no-store');
   res.type('html').send(renderIndex(req));
 });
 
 app.use(express.static(path.join(__dirname, 'public'), {
   setHeaders(res, file) {
     if (file.endsWith('.html')) {
-      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Cache-Control', 'no-store');
     } else if (/\.(?:css|js)$/.test(file)) {
       const expected = CLIENT_ASSET_VERSIONS[path.basename(file)];
       const versioned = expected && String(res.req?.query?.v || '') === expected;

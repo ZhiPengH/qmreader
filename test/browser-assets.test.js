@@ -29,7 +29,7 @@ test('new HTML uses content hashes instead of legacy immutable URLs; only matchi
     for (const route of ['/', '/index.html', '/me']) {
       const response = await fetch(base + route);
       assert.equal(response.status, 200);
-      assert.equal(response.headers.get('cache-control'), 'no-cache');
+      assert.equal(response.headers.get('cache-control'), 'no-store');
       const html = await response.text();
       for (const name of ['app.js', 'styles.css']) {
         const digest = createHash('sha256').update(fs.readFileSync(path.join(root, 'public', name))).digest('hex');
