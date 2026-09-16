@@ -600,6 +600,16 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   padding: 12px 10px 6px;
   display: flex; align-items: center; gap: 6px;
 }
+.group-label.group-toggle::after {
+  content: '⌄';
+  margin-left: auto;
+  font-size: 10px;
+  transition: transform .15s ease;
+}
+.group-label.group-toggle.collapsed::after { transform: rotate(-90deg); }
+.group-label.group-toggle.collapsed { padding-bottom: 10px; }
+.feed-group-items { display: block; }
+.feed-group-items[hidden] { display: none; }
 .feed-item {
   display: flex; align-items: center; gap: 9px;
   padding: 6px 10px; border-radius: 8px;
@@ -4700,6 +4710,7 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   font-weight: 750;
 }
 .submit-link-form input,
+.submit-link-form select,
 .submit-link-form textarea {
   width: 100%;
   min-width: 0;
@@ -4725,6 +4736,15 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
 .submit-link-actions {
   display: flex;
   justify-content: flex-end;
+}
+.submit-link-meta {
+  margin: -4px 0 0;
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .submit-link-actions .ghost-btn {
   flex: none;
@@ -8995,6 +9015,118 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
 .rss-notice { font-size: 13px; color: var(--text-1); overflow-wrap: anywhere; }
 .rss-box { border: 1px solid var(--border); background: var(--bg-1); border-radius: 10px; padding: 14px; margin-bottom: 14px; }
 .rss-box summary { cursor: pointer; font-weight: 700; font-size: 14px; }
+#rss-deleted-details summary { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+#rss-deleted-purge { font-size: 12px; padding: 3px 10px; min-height: 26px; }
+.rss-search { display: flex; justify-content: flex-end; margin: 0 0 10px; }
+.rss-group-bar { display: flex; flex-wrap: wrap; gap: 10px 8px; margin: 0 0 12px; }
+.rss-group-chip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  padding: 5px 12px;
+  border-radius: 10px;
+  --chip: var(--chip-l, #b55234);
+  border: 1px solid color-mix(in srgb, var(--chip) 40%, transparent);
+  background: color-mix(in srgb, var(--chip) 12%, transparent);
+  color: var(--chip);
+  font-size: 12.5px;
+  font-weight: 650;
+  cursor: pointer;
+  user-select: none;
+}
+[data-theme="dark"] .rss-group-chip { --chip: var(--chip-d, var(--chip-l, #cf7a55)); background: color-mix(in srgb, var(--chip) 20%, transparent); }
+.rss-group-chip:hover { border-color: color-mix(in srgb, var(--chip) 75%, transparent); }
+.rss-group-chip.active {
+  background: color-mix(in srgb, var(--chip) 82%, transparent);
+  border-color: transparent;
+  color: #fff;
+}
+.rss-group-chip .rss-group-count { font-size: 11px; opacity: .72; font-weight: 600; }
+.rss-group-chip .rss-group-close {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: none;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: var(--semantic-red);
+  color: #fff;
+  font-size: 11px;
+  line-height: 1;
+  padding: 0;
+  cursor: pointer;
+}
+.rss-group-chip:hover .rss-group-close { display: inline-flex; }
+.rss-group-add .app-icon { width: 14px; height: 14px; }
+.rss-group-chip.rss-c0 { --chip-l: #b55234; --chip-d: #cf7a55; }
+.rss-group-chip.rss-c1 { --chip-l: #84613a; --chip-d: #c8a074; }
+.rss-group-chip.rss-c2 { --chip-l: #52654b; --chip-d: #8fa286; }
+.rss-group-chip.rss-c3 { --chip-l: #41627f; --chip-d: #7d97b3; }
+.rss-group-chip.rss-c4 { --chip-l: #884854; --chip-d: #bd7482; }
+.rss-group-confirm {
+  position: absolute;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: 0 10px 30px rgb(0 0 0 / .16);
+  font-size: 12.5px;
+  color: var(--text-1);
+  white-space: nowrap;
+}
+.rss-group-confirm .ghost-btn { padding: 3px 10px; min-height: 26px; font-size: 12px; }
+.rss-group-confirm .danger { background: var(--semantic-red); border-color: transparent; color: #fff; }
+.group-toggle[draggable="true"] { -webkit-user-drag: element; }
+.group-toggle.dragging { opacity: .45; }
+.group-toggle.drop-target { box-shadow: inset 0 2px 0 var(--focus-ring); }
+.rss-group-editing input {
+  width: 150px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 12.5px;
+  outline: none;
+  padding: 0;
+}
+.rss-group-close[data-confirm] { background: #b02a2a; width: 18px; height: 18px; font-weight: 700; }
+.rss-search-box { position: relative; width: min(320px, 100%); }
+.rss-search-box input {
+  width: 100%;
+  min-width: 0;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  color: var(--text-0);
+  border-radius: 8px;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.45;
+  padding: 8px 32px 8px 10px;
+  outline: none;
+}
+.rss-search-box input:focus { border-color: var(--focus-ring); box-shadow: 0 0 0 3px var(--focus-halo); }
+.rss-search-box .app-icon {
+  position: absolute;
+  right: 9px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 14px;
+  height: 14px;
+  color: var(--text-2);
+  pointer-events: none;
+}
+.rss-box.rss-box-locked summary { cursor: default; pointer-events: none; list-style: none; }
+.rss-box.rss-box-locked summary::-webkit-details-marker { display: none; }
+.rss-box.rss-box-locked summary::after { content: none; }
+.rss-divider { border-top: 1px solid var(--border); margin: 0 0 14px; }
 .rss-form { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 14px; }
 .rss-form label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; min-width: 0; }
 .rss-form input, .rss-form textarea, .rss-form select { width: 100%; min-width: 0; box-sizing: border-box; padding: 9px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-0); color: var(--text-0); font: inherit; }
@@ -9008,6 +9140,9 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
 .rss-source-info { min-width: 0; flex: 1; overflow-wrap: anywhere; }
 .rss-source-info strong { font-size: 14px; }
 .rss-source-meta { display: block; color: var(--text-2); font-size: 12px; margin: 6px 0; }
+.rss-source-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; }
+.rss-source-head .rss-source-meta { display: inline; margin: 0; }
+.rss-source-head .rss-source-error { display: inline; margin: 0; color: var(--text-2); }
 .rss-source-title.aging { color: #c56816; }
 .rss-source-title.stale { color: var(--semantic-red); }
 .rss-latest-article { margin-top: 10px; padding: 10px 12px; border-radius: 8px; background: var(--bg-2); font-size: 12px; line-height: 1.6; }

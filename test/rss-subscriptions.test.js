@@ -78,7 +78,7 @@ test('user RSS validation rejects private addresses, credentials and malformed f
   for (const url of ['http://127.0.0.1/rss', 'http://[::1]/rss', 'http://169.254.169.254/latest/meta-data', 'http://2130706433/rss', 'https://user:pass@example.com/rss', 'file:///etc/passwd', 'wpjson:https://example.com/rss']) {
     await assert.rejects(subscriptions.createSource({ name: 'Unsafe', feeds: [url] }), { statusCode: 400 });
   }
-  for (const fields of [{ name: '' }, { enabled: 'true' }, { feeds: [] }, { category: 'invalid' }]) {
+  for (const fields of [{ name: '' }, { enabled: 'true' }, { feeds: [] }, { category: '<x>' }]) {
     await assert.rejects(subscriptions.createSource({ name: 'Bad', feeds: ['https://valid.example.com/rss'], ...fields }, options), { statusCode: 400 });
   }
 });
@@ -233,6 +233,36 @@ test('moving a source through all categories preserves its identity, feeds and p
   const saved = JSON.parse(restarted.stdout).find(item => item.id === source.id);
   assert.equal(saved.category, 'podcast');
   assert.equal(saved.pinned, true);
-  await assert.rejects(subscriptions.updateSource(source.id, { category: 'unknown' }, options), { statusCode: 400 });
-  assert.equal(subscriptions.getSources().find(item => item.id === source.id).category, 'podcast');
+  await assert.rejects(subscriptions.updateSource(source.id, { category: '' }, options), { statusCode: 400 });
+  const custom = await subscriptions.updateSource(source.id, { category: '科技前沿' }, options);
+  assert.equal(custom.category, '科技前沿');
+  assert.equal(subscriptions.getSources().find(item => item.id === source.id).category, '科技前沿');
+});
+
+test('URL imports derive site origin for favicons and mark auto-named entries', async () => {
+  const result = await subscriptions.importSources({ format: 'urls', content: 'https://icon-import.example.com/feed' }, options);
+  assert.equal(result.added, 1);
+  const item = result.results[0];
+  assert.equal(item.status, 'added');
+  assert.equal(item.autoNamed, true);
+  assert.equal(item.name, 'icon-import.example.com');
+  const saved = subscriptions.getSources().find(source => source.id === item.id);
+  assert.equal(saved.siteUrl, 'https://icon-import.example.com/');
+});
+
+test('purging deleted sources removes custom overrides and permanently hides builtins', async () => {
+  const custom = await subscriptions.createSource({ name: '待清除', feeds: ['https://purge.example.com/rss'] }, options);
+  await subscriptions.updateSource(custom.id, { deleted: true }, options);
+  const builtinId = SOURCES[0].id;
+  await subscriptions.updateSource(builtinId, { deleted: true }, options);
+  const before = subscriptions.getSources().filter(item => item.deleted);
+  assert.ok(before.some(item => item.id === custom.id));
+  const result = subscriptions.purgeDeletedSources();
+  assert.equal(result.purged, before.length);
+  const after = subscriptions.getSources();
+  assert.ok(!after.some(item => item.id === custom.id));
+  const builtin = after.find(item => item.id === builtinId);
+  assert.equal(builtin.deleted, true);
+  assert.equal(builtin.purged, true);
+  await subscriptions.updateSource(builtinId, { deleted: false }, options);
 });

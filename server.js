@@ -1943,6 +1943,38 @@ app.get('/api/me/offline-prefetch', requirePersonalIdentity, (req, res) => {
   res.json(offlinePrefetch.getOfflinePrefetchStatus());
 });
 
+app.post('/api/me/rss-preview', requirePersonalIdentity, async (req, res) => {
+  try {
+    const raw = String((req.body && req.body.url) || '').trim();
+    const canonical = subscriptions.feedCandidate(raw);
+    const candidates = subscriptions.expandRsshub(canonical);
+    let lastError = null;
+    for (const url of candidates) {
+      try {
+        const feed = await fetcher.parseRssUrl(url);
+        const items = Array.isArray(feed.items) ? feed.items : [];
+        if (!feed.title && !items.length) throw new Error('内容不是有效的 RSS 源');
+        const latest = items[0];
+        const feedLink = String(feed.link || '').trim();
+        const siteUrl = /^https?:\/\//i.test(feedLink) ? feedLink : new URL(url).origin;
+        return res.json({
+          url: canonical,
+          resolvedUrl: url,
+          title: String(feed.title || '').trim(),
+          siteUrl,
+          itemCount: items.length,
+          latestTitle: latest ? String(latest.title || '').trim() : '',
+        });
+      } catch (error) {
+        lastError = `${url}: ${error.message || error}`;
+      }
+    }
+    return res.status(422).json({ error: `无法解析该 RSS 地址${candidates.length > 1 ? `（已尝试 ${candidates.length} 个 RSSHub 实例）` : ''}：${lastError || '未知错误'}` });
+  } catch (error) {
+    sendError(res, error, 'RSS 预览失败');
+  }
+});
+
 app.post('/api/me/offline-prefetch', requirePersonalIdentity, (req, res) => {
   const wasRunning = offlinePrefetch.getOfflinePrefetchStatus().running;
   if (!wasRunning) {
@@ -2199,6 +2231,7 @@ function normalizeBackgroundJob(job = {}) {
     sourceIds,
     reason,
     fetchOnly: Boolean(job.fetchOnly),
+    limit: Number.isFinite(Number(job.limit)) && Number(job.limit) > 0 ? Math.min(Math.floor(Number(job.limit)), 100) : 0,
     requestedAt: Date.now(),
   };
 }
@@ -2704,6 +2737,30 @@ app.post('/api/sources/:id/refresh-hint', (req, res) => {
   }
 });
 
+app.post('/api/sources/:id/refresh-manual', requirePersonalIdentity, (req, res) => {
+  try {
+    const id = String(req.params.id || '').trim();
+    const src = fetcher.getSourceById(id);
+    if (!src) return res.status(404).json({ error: 'source not found' });
+    if (src.manual) return res.status(400).json({ error: '手动投稿源无需刷新' });
+    if (!fetcher.isEnabled(src)) return res.status(400).json({ error: '订阅已停用，请先恢复再刷新' });
+    if (refreshWorker) return res.json({ ok: true, refresh: { started: false, running: true, skipped: 'refresh already running' } });
+    const refresh = startBackgroundJob({ kind: 'refresh', sourceId: id, sourceIds: [id], reason: 'manual-refresh', limit: 50 });
+    res.json({ ok: true, refresh: { ...refresh, limit: 50 } });
+  } catch (e) {
+    sendError(res, e, 'manual refresh failed');
+  }
+});
+
+app.post('/api/me/sources/purge-deleted', requirePersonalIdentity, (req, res) => {
+  try {
+    const result = subscriptions.purgeDeletedSources();
+    res.json({ ok: true, purged: result.purged });
+  } catch (e) {
+    sendError(res, e, 'purge deleted sources failed');
+  }
+});
+
 app.get('/api/me', (req, res) => {
   res.json({ user: req.user || null });
 });
@@ -2715,9 +2772,65 @@ app.get('/api/me/sources', requirePersonalIdentity, (req, res) => {
 function sourceResponse(id) {
   return fetcher.getSourcesMeta({ includeDeleted: true }).find(source => source.id === id);
 }
-function hintNewSubscription(id) {
-  try { triggerSourceInteractionRefresh(id, 'subscription-update'); }
-  catch (error) { console.error('[subscription refresh]', id, error.message); }
+function hintNewSubscription(id, attempt = 0) {
+  let result = null;
+  try { result = triggerSourceInteractionRefresh(id, 'subscription-update'); }
+  catch (error) { console.error('[subscription refresh]', id, error.message); return; }
+  if (result && result.started) {
+    const timer = setTimeout(() => {
+      try {
+        const meta = fetcher.getSourcesMeta({ includeDeleted: true }).find(item => item.id === id);
+        if (!meta || meta.status === 'ok' || (meta.entryCount || 0) > 0) return;
+        if (forceSubscriptionRefresh(id)) console.log('[subscription refresh] retry after failure', id);
+      } catch (error) { console.error('[subscription refresh retry]', id, error.message); }
+    }, 30000);
+    if (typeof timer.unref === 'function') timer.unref();
+    return;
+  }
+  if (attempt >= 12) {
+    console.warn('[subscription refresh] not started', id, result && result.skipped);
+    return;
+  }
+  const timer = setTimeout(() => hintNewSubscription(id, attempt + 1), 5000);
+  if (typeof timer.unref === 'function') timer.unref();
+}
+
+function forceSubscriptionRefresh(id) {
+  if (refreshWorker) return false;
+  const src = fetcher.getSourceById(id);
+  if (!src || src.manual || !fetcher.isEnabled(src)) return false;
+  return startBackgroundJob({ kind: 'refresh', sourceId: id, sourceIds: [id], reason: 'subscription-retry' }).started;
+}
+
+async function enrichImportedSources(items) {
+  let cursor = 0;
+  const worker = async () => {
+    while (cursor < items.length) {
+      const item = items[cursor++];
+      try {
+        const candidates = subscriptions.expandRsshub(subscriptions.feedCandidate(item.url));
+        let feed = null;
+        for (const url of candidates) {
+          try {
+            const parsed = await fetcher.parseRssUrl(url);
+            if (parsed && (parsed.title || parsed.link)) { feed = parsed; break; }
+          } catch { /* try next instance */ }
+        }
+        if (!feed) continue;
+        const title = String(feed.title || '').trim().slice(0, 120);
+        const link = String(feed.link || '').trim();
+        const patch = {};
+        if (title && title !== item.name) patch.name = title;
+        if (/^https?:\/\//i.test(link)) patch.siteUrl = link;
+        if (!Object.keys(patch).length) continue;
+        await subscriptions.updateSource(item.id, patch);
+        console.log(`[import enrich] ${item.id}: ${patch.name || item.name}`);
+      } catch (error) {
+        console.warn(`[import enrich] ${item.id} failed: ${error.message || error}`);
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(4, items.length) }, worker));
 }
 app.post('/api/me/sources', requirePersonalIdentity, async (req, res) => {
   try {
@@ -2731,6 +2844,8 @@ app.post('/api/me/sources/import', requirePersonalIdentity, async (req, res) => 
     const result = await subscriptions.importSources(req.body);
     res.json(result);
     const sourceIds = result.results.filter(item => item.status === 'added').map(item => item.id);
+    const autoNamed = result.results.filter(item => item.status === 'added' && item.autoNamed && item.id);
+    if (autoNamed.length) setImmediate(() => { enrichImportedSources(autoNamed).catch(() => {}); });
     if (sourceIds.length) setImmediate(() => {
       try { startBackgroundJob({ kind: 'refresh', sourceIds, reason: 'subscription-import' }); }
       catch (error) { console.error('[subscription import refresh]', error.message); }

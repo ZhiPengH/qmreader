@@ -728,7 +728,6 @@ const state = {
   pendingAiAction: '',
   pendingAgentText: '',
   articleLinkMenuUrl: '',
-  articleLinkSubmitting: false,
   loadedAiScope: '',
 };
 const sourceRefreshHintAt = new Map();
@@ -1685,6 +1684,26 @@ function hintSourceRefresh(sourceId, reason = 'source-interaction') {
     .catch(() => {});
 }
 
+async function manuallyRefreshSource(id) {
+  if (!requirePersonalIdentity()) return;
+  try {
+    const data = await api(`/api/sources/${encodeURIComponent(id)}/refresh-manual`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    });
+    const refresh = data && data.refresh;
+    if (refresh && refresh.running && !refresh.started) {
+      toast('已有刷新在进行中，完成后自动更新');
+    } else {
+      toast('已开始手动刷新，抓取最近 50 条');
+    }
+    pollHintedSourceRefresh(id);
+  } catch (err) {
+    toast('手动刷新失败：' + err.message, 5000);
+  }
+}
+
 function pollHintedSourceRefresh(sourceId) {
   const id = String(sourceId || '').trim();
   if (!id || sourceRefreshPolls.has(id)) return;
@@ -1950,6 +1969,23 @@ function recordEntryView(entryId) {
     .catch(err => toast('记录访问失败: ' + err.message, 4000));
 }
 
+function collapsedFeedGroups() {
+  try { return new Set(JSON.parse(storage.getItem('qm_feed_groups_collapsed') || '[]')); }
+ catch { return new Set(); }
+}
+
+function persistCollapsedFeedGroups(set) {
+  storage.setItem('qm_feed_groups_collapsed', JSON.stringify([...set]));
+}
+
+function feedGroupsOrder() {
+  try { return JSON.parse(storage.getItem('qm_feed_groups_order') || '[]'); } catch { return []; }
+}
+
+function persistFeedGroupsOrder(list) {
+  storage.setItem('qm_feed_groups_order', JSON.stringify(list));
+}
+
 async function loadMe() {
   const data = await api('/api/me');
   if (!data.user?.id) throw new Error('服务未返回个人身份');
@@ -1972,21 +2008,50 @@ function unreadCountFor(pred, base = state.entries) {
 
 function renderSidebar() {
   closeFeedMenu(false);
-  const groups = { article: [], news: [], podcast: [] };
-  for (const s of state.sources) if (s.enabled && !s.manual) groups[s.category]?.push(s);
+  const groups = new Map([['article', []], ['news', []], ['podcast', []]]);
+  for (const s of state.sources) if (s.enabled && !s.manual) {
+    const cat = s.category || 'article';
+    if (!groups.has(cat)) groups.set(cat, []);
+    groups.get(cat).push(s);
+  }
 
   const unreadBase = state.entriesAll || state.entries;
   const wrap = $('#feed-groups');
   wrap.innerHTML = '';
-  for (const [cat, list] of Object.entries(groups)) {
+  const collapsed = collapsedFeedGroups();
+  const order = feedGroupsOrder();
+  const orderedCats = [...groups.keys()].sort((a, b) => {
+    const ia = order.indexOf(a);
+    const ib = order.indexOf(b);
+    return (ia < 0 ? 999 : ia) - (ib < 0 ? 999 : ib);
+  });
+  for (const cat of orderedCats) {
+    const list = groups.get(cat) || [];
     if (!list.length) continue;
     const label = document.createElement('div');
-    label.className = 'group-label';
-    label.textContent = CATEGORY_LABELS[cat];
+    label.className = 'group-label group-toggle' + (collapsed.has(cat) ? ' collapsed' : '');
+    label.dataset.category = cat;
+    label.draggable = true;
+    label.textContent = categoryLabel(cat);
     label.style.cursor = 'pointer';
-    label.title = `查看全部${CATEGORY_LABELS[cat]}`;
-    label.onclick = () => selectCategory(cat);
+    label.title = '展开 / 收起该分组';
+    label.setAttribute('role', 'button');
+    label.setAttribute('aria-expanded', collapsed.has(cat) ? 'false' : 'true');
     wrap.appendChild(label);
+    const items = document.createElement('div');
+    items.className = 'feed-group-items';
+    items.dataset.category = cat;
+    items.hidden = collapsed.has(cat);
+    wrap.appendChild(items);
+    label.onclick = () => {
+      const set = collapsedFeedGroups();
+      const next = !set.has(cat);
+      if (next) set.add(cat); else set.delete(cat);
+      persistCollapsedFeedGroups(set);
+      label.classList.toggle('collapsed', next);
+      label.setAttribute('aria-expanded', next ? 'false' : 'true');
+      items.hidden = next;
+    };
 
     for (const s of list) {
       const row = document.createElement('div');
@@ -2012,7 +2077,7 @@ function renderSidebar() {
         if (row.classList.contains('swiped')) { closeSwipedFeedRows(); return; }
         selectSource(s.id);
       };
-      wrap.appendChild(row);
+      items.appendChild(row);
     }
   }
 
@@ -2232,11 +2297,12 @@ function openFeedMenu(id, trigger) {
   root.innerHTML = `<div class="feed-menu-main" role="menu" aria-label="${escapeHtml(source.name)}订阅操作">
     <button role="menuitem" data-menu-action="pin">${iconMarkup('pin')}<span>${source.pinned ? '取消置顶' : '置顶到最爱'}</span></button>
     <button role="menuitem" data-menu-action="move" aria-haspopup="menu" aria-expanded="false">${iconMarkup('folder-input')}<span>移动到分类</span>${iconMarkup('chevron-right')}</button>
+    <button role="menuitem" data-menu-action="refresh">${iconMarkup('refresh-cw')}<span>手动刷新</span></button>
     <div class="feed-menu-separator" role="separator"></div>
     <button role="menuitem" class="feed-menu-delete" data-menu-action="delete">${iconMarkup('trash')}<span>删除订阅</span></button>
   </div><div class="feed-category-menu" role="menu" aria-label="移动到分类" hidden>
     <button class="feed-category-back" role="menuitem" data-menu-action="back">${iconMarkup('arrow-left')}<span>返回</span></button>
-    ${Object.entries(CATEGORY_LABELS).map(([key, label]) => `<button role="menuitemradio" aria-checked="${source.category === key}" data-category="${key}"><span>${escapeHtml(label)}</span>${source.category === key ? iconMarkup('check') : ''}</button>`).join('')}
+    ${knownCategories().map(key => `<button role="menuitemradio" aria-checked="${source.category === key}" data-category="${key}"><span>${escapeHtml(categoryLabel(key))}</span>${source.category === key ? iconMarkup('check') : ''}</button>`).join('')}
   </div>`;
   document.body.appendChild(root);
   feedMenuState = { root, trigger, id };
@@ -2258,6 +2324,7 @@ function openFeedMenu(id, trigger) {
     if (action === 'back') { showFeedCategories(false); return; }
     closeFeedMenu();
     if (action === 'pin') togglePinSource(id);
+    if (action === 'refresh') manuallyRefreshSource(id);
     if (action === 'delete') deleteSourceFromSidebar(id);
   });
     root.querySelectorAll('.feed-menu-main [data-menu-action]').forEach(button => {
@@ -3408,22 +3475,60 @@ function requirePersonalIdentity() {
   return false;
 }
 
-function openSubmitLinkModal(prefill = {}) {
-  const next = {
-    url: String(prefill.url || '').trim(),
-    note: String(prefill.note || '').trim(),
-  };
-  if (!state.me) {
-    requirePersonalIdentity();
-    toast('个人数据尚未就绪，暂时无法提交链接');
-    return false;
+const quickSub = { previewUrl: '', rawUrl: '', busy: false };
+
+function setQuickSubButton(text, disabled = false) {
+  const btn = $('#submit-link-submit');
+  btn.textContent = text;
+  btn.disabled = disabled;
+}
+
+function resetQuickSubMeta() {
+  const meta = $('#submit-link-meta');
+  if (meta) {
+    meta.textContent = '';
+    meta.classList.add('hidden');
   }
-  $('#submit-link-url').value = next.url || '';
-  $('#submit-link-note').value = next.note || '';
-  $('#submit-link-submit').disabled = false;
-  $('#submit-link-submit').textContent = '提交';
+}
+
+function resetQuickSubPreview() {
+  quickSub.previewUrl = '';
+  quickSub.rawUrl = '';
+  quickSub.siteUrl = '';
+  resetQuickSubMeta();
+  const title = $('#submit-link-title');
+  if (title && title.dataset.autoFilled === '1') {
+    title.value = '';
+    title.dataset.autoFilled = '0';
+  }
+  if (!quickSub.busy) setQuickSubButton('预览');
+}
+
+function openSubmitLinkModal() {
+  if (!requirePersonalIdentity()) return false;
+  quickSub.previewUrl = '';
+  quickSub.rawUrl = '';
+  quickSub.busy = false;
+  quickSub.siteUrl = '';
+  $('#submit-link-url').value = '';
+  const title = $('#submit-link-title');
+  title.value = '';
+  title.dataset.autoFilled = '0';
+  $('#submit-link-category').value = 'article';
+  resetQuickSubMeta();
+  setQuickSubButton('预览');
   $('#submit-link-modal').classList.remove('hidden');
-  setTimeout(() => (next.url ? $('#submit-link-note') : $('#submit-link-url')).focus(), 30);
+  setTimeout(() => $('#submit-link-url').focus(), 30);
+  if (navigator.clipboard && navigator.clipboard.readText) {
+    navigator.clipboard.readText().then(text => {
+      const value = String(text || '').trim();
+      if (!/^https?:\/\//i.test(value)) return;
+      if ($('#submit-link-modal').classList.contains('hidden')) return;
+      if ($('#submit-link-url').value) return;
+      $('#submit-link-url').value = value;
+      submitReaderLink();
+    }).catch(() => {});
+  }
   return true;
 }
 
@@ -3432,29 +3537,77 @@ function closeSubmitLinkModal() {
 }
 
 async function submitReaderLink() {
-  if (!requirePersonalIdentity()) return;
   const url = $('#submit-link-url').value.trim();
-  const note = $('#submit-link-note').value.trim();
+  if (quickSub.busy) return;
   if (!url) {
-    toast('请填写链接');
+    toast('请填写 RSS 链接');
     return;
   }
+  if (quickSub.previewUrl && url === quickSub.rawUrl) {
+    subscribePreviewedFeed();
+    return;
+  }
+  if (!requirePersonalIdentity()) return;
+  quickSub.busy = true;
   const btn = $('#submit-link-submit');
   btn.disabled = true;
-  btn.textContent = '提交中…';
+  btn.textContent = '解析中…';
+  resetQuickSubMeta();
   try {
-    const data = await api('/api/submit-link', {
+    const data = await api('/api/me/rss-preview', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url, note }),
+      body: JSON.stringify({ url }),
     });
-    closeSubmitLinkModal();
-    if (data.pending) toast('已进入审核队列，通过后才会抓取和公开');
+    quickSub.rawUrl = url;
+    quickSub.previewUrl = data.url || url;
+    quickSub.siteUrl = data.siteUrl || '';
+    const title = $('#submit-link-title');
+    if (!title.value || title.dataset.autoFilled === '1') {
+      title.value = data.title || '';
+      title.dataset.autoFilled = data.title ? '1' : '0';
+    }
+    const meta = $('#submit-link-meta');
+    const countText = `解析到 ${data.itemCount} 条`;
+    meta.textContent = data.latestTitle ? `${countText} · 最新：${data.latestTitle}` : countText;
+    meta.classList.remove('hidden');
+    btn.textContent = '订阅';
+    if (!data.title) toast('该源没有标题，请手动填写后再订阅');
   } catch (err) {
-    toast('提交失败: ' + err.message, 5000);
+    toast('预览失败：' + err.message, 6000);
+    btn.textContent = '预览';
   } finally {
     btn.disabled = false;
-    btn.textContent = '提交';
+    quickSub.busy = false;
+  }
+}
+
+async function subscribePreviewedFeed() {
+  const name = $('#submit-link-title').value.trim();
+  if (!name) {
+    toast('请先填写标题');
+    $('#submit-link-title').focus();
+    return;
+  }
+  const category = $('#submit-link-category').value || 'article';
+  quickSub.busy = true;
+  setQuickSubButton('订阅中…', true);
+  try {
+    const data = await api('/api/me/sources', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, category, feeds: [quickSub.previewUrl], siteUrl: quickSub.siteUrl || '' }),
+    });
+    closeSubmitLinkModal();
+    await loadSources();
+    renderSidebar();
+    toast(`已订阅「${name}」，开始抓取文章`);
+    if (data && data.source && data.source.id) pollHintedSourceRefresh(data.source.id);
+  } catch (err) {
+    toast('订阅失败：' + err.message, 5000);
+    setQuickSubButton('订阅');
+  } finally {
+    quickSub.busy = false;
   }
 }
 
@@ -4952,36 +5105,6 @@ function showArticleLinkMenu(anchor, event) {
   menu.style.left = `${Math.round(left)}px`;
   menu.style.top = `${Math.round(top)}px`;
   return true;
-}
-
-async function submitArticleLinkToSite() {
-  const url = state.articleLinkMenuUrl;
-  hideArticleLinkMenu();
-  if (!url) return;
-  const title = state.activeEntry && (state.activeEntry.titleZh || state.activeEntry.title);
-  const note = title ? `来自《${title}》正文链接` : '';
-  if (!state.me) {
-    openSubmitLinkModal({ url, note });
-    return;
-  }
-  if (state.articleLinkSubmitting) return;
-  state.articleLinkSubmitting = true;
-  try {
-    await api('/api/submit-link', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url, note }),
-    });
-    await Promise.all([loadSources(), loadEntries(), loadContributors()]);
-    updateListTitle();
-    renderList();
-    renderSidebar();
-    toast('已收录到本站，正在生成中文改写');
-  } catch (err) {
-    toast('收录失败: ' + err.message, 5000);
-  } finally {
-    state.articleLinkSubmitting = false;
-  }
 }
 
 function openArticleLinkInWindow() {
@@ -6586,6 +6709,25 @@ function rssFeedsAreAdvanced(source) {
   return (source.feeds || []).some(feed => typeof feed !== 'string' || !/^https?:\/\//i.test(feed) || /\{rsshub\}/i.test(feed));
 }
 
+function categoryLabel(cat) {
+  return CATEGORY_LABELS[cat] || cat || '文章';
+}
+
+function normalizeCategoryInput(value) {
+  const raw = String(value || '').trim().slice(0, 24);
+  const hit = Object.entries(CATEGORY_LABELS).find(([, label]) => label === raw);
+  return hit ? hit[0] : raw;
+}
+
+function knownCategories() {
+  const list = ['article', 'news', 'podcast'];
+  for (const s of state.sources) {
+    const cat = s.category || 'article';
+    if (!list.includes(cat)) list.push(cat);
+  }
+  return list;
+}
+
 function setRssBusy(busy) {
   state.rssBusy = busy;
   $$('#dashboard-sources-panel button, #dashboard-sources-panel input, #dashboard-sources-panel select, #dashboard-sources-panel textarea').forEach(node => { node.disabled = busy; });
@@ -6622,25 +6764,219 @@ function visibleRssSources(sources, inactiveOnly, now = Date.now()) {
     .sort((a, b) => Date.parse(a.latestArticle.published) - Date.parse(b.latestArticle.published)) : available;
 }
 
+function rssSourceSearchScore(source, query) {
+  const q = String(query || '').trim().toLowerCase();
+  if (!q) return 1;
+  const name = String(source.name || '').toLowerCase();
+  const feeds = String((source.feeds || []).join(' ')).toLowerCase();
+  let score = 0;
+  if (name === q) score += 8;
+  else if (name.startsWith(q)) score += 6;
+  else if (name.includes(q)) score += 5;
+  if (feeds.includes(q)) score += 3;
+  return score;
+}
+
+function orderedRssSources(sources, { recentFirst = false, query = '' } = {}) {
+  const q = String(query || '').trim();
+  if (q) {
+    return sources
+      .map(source => ({ source, score: rssSourceSearchScore(source, q) }))
+      .filter(item => item.score > 0)
+      .sort((a, b) => b.score - a.score || (Number(b.source.createdAt) || 0) - (Number(a.source.createdAt) || 0))
+      .map(item => item.source);
+  }
+  if (recentFirst) {
+    return [...sources].sort((a, b) => (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0));
+  }
+  return sources;
+}
+
 function toggleInactiveRssSources() {
   state.rssInactiveOnly = !state.rssInactiveOnly;
   renderRssSources();
 }
 
+function toggleRecentRssSources() {
+  state.rssRecentFirst = !state.rssRecentFirst;
+  renderRssSources();
+}
+
+const RSS_CUSTOM_GROUPS_KEY = 'qm_custom_groups';
+const RSS_GROUP_COLOR_KEYS = { article: 0, news: 1, podcast: 2 };
+
+function customRssGroups() {
+  try {
+    const list = JSON.parse(storage.getItem(RSS_CUSTOM_GROUPS_KEY) || '[]');
+    return Array.isArray(list) ? list.filter(item => typeof item === 'string' && item) : [];
+  } catch { return []; }
+}
+
+function persistCustomRssGroups(list) {
+  storage.setItem(RSS_CUSTOM_GROUPS_KEY, JSON.stringify(list));
+}
+
+function rssGroupColorClass(name) {
+  if (Number.isFinite(RSS_GROUP_COLOR_KEYS[name])) return `rss-c${RSS_GROUP_COLOR_KEYS[name]}`;
+  let hash = 0;
+  for (const ch of String(name)) hash = (hash * 31 + ch.codePointAt(0)) >>> 0;
+  return `rss-c${3 + (hash % 3)}`;
+}
+
+function allRssGroups() {
+  const list = knownCategories();
+  for (const name of customRssGroups()) if (!list.includes(name)) list.push(name);
+  return list;
+}
+
+function renderRssGroups() {
+  const bar = $('#rss-group-bar');
+  if (!bar) return;
+  const filter = state.rssCategoryFilter || '';
+  const customs = customRssGroups();
+  bar.innerHTML = allRssGroups()
+    .filter(name => customs.includes(name) || filter === name || state.rssSources.some(s => !s.deleted && (s.category || 'article') === name))
+    .map(name => {
+      const count = state.rssSources.filter(s => !s.deleted && (s.category || 'article') === name).length;
+      const active = filter === name;
+      return `<div class="rss-group-chip ${rssGroupColorClass(name)}${active ? ' active' : ''}" data-group="${escapeHtml(name)}" role="button" tabindex="0" aria-pressed="${active}" title="筛选该分组">
+        <span>${escapeHtml(categoryLabel(name))}${count ? ` <span class="rss-group-count">${count}</span>` : ''}</span>
+        <button type="button" class="rss-group-close" data-group-close="${escapeHtml(name)}" aria-label="删除分组" title="删除分组（订阅移入文章）">×</button>
+      </div>`;
+    }).join('')
+    + `<button id="rss-group-add" class="rss-group-chip rss-group-add rss-c3" type="button" title="添加分组">${iconMarkup('house-plus')}</button>`;
+  const datalist = $('#rss-category-options');
+  if (datalist) datalist.innerHTML = allRssGroups().map(name => `<option value="${escapeHtml(categoryLabel(name))}"></option>`).join('');
+}
+
+function addRssGroup() {
+  const bar = $('#rss-group-bar');
+  if (!bar || $('#rss-group-add-input')) return;
+  const wrap = document.createElement('span');
+  wrap.className = 'rss-group-chip rss-group-editing';
+  wrap.style.setProperty('--chip-h', 152);
+  wrap.innerHTML = '<input id="rss-group-add-input" maxlength="24" placeholder="新分组名称，回车确认" />';
+  bar.insertBefore(wrap, $('#rss-group-add'));
+  const input = wrap.querySelector('input');
+  input.focus();
+  let done = false;
+  const finish = ok => {
+    if (done || !wrap.isConnected) return;
+    done = true;
+    const value = normalizeCategoryInput(input.value);
+    wrap.remove();
+    if (!ok || !value) return;
+    const customs = customRssGroups();
+    if (!customs.includes(value) && !knownCategories().includes(value)) {
+      customs.push(value);
+      persistCustomRssGroups(customs);
+    }
+    renderRssGroups();
+    toast(`分组「${categoryLabel(value)}」已添加，编辑订阅时可选用`);
+  };
+  input.onkeydown = event => {
+    if (event.key === 'Enter') { event.preventDefault(); finish(true); }
+    if (event.key === 'Escape') { event.preventDefault(); finish(false); }
+  };
+  input.onblur = () => finish(false);
+}
+
+function hideRssGroupConfirm() {
+  const pop = $('#rss-group-confirm');
+  if (pop) pop.remove();
+}
+
+function showRssGroupConfirm(name, anchor) {
+  hideRssGroupConfirm();
+  const targets = state.rssSources.filter(s => !s.deleted && (s.category || 'article') === name);
+  showRssPopoverConfirm(anchor, `删除分组「${escapeHtml(categoryLabel(name))}」？${targets.length ? `${targets.length} 个订阅将移入「文章」。` : ''}`, async () => {
+    await deleteRssGroup(name);
+  });
+}
+
+function showRssPopoverConfirm(anchor, text, onConfirm) {
+  hideRssGroupConfirm();
+  const pop = document.createElement('div');
+  pop.id = 'rss-group-confirm';
+  pop.className = 'rss-group-confirm';
+  pop.innerHTML = `<span>${text}</span>
+    <button type="button" class="ghost-btn danger" data-confirm-delete="1">删除</button>
+    <button type="button" class="ghost-btn" data-confirm-cancel="1">取消</button>`;
+  document.body.appendChild(pop);
+  const rect = anchor.getBoundingClientRect();
+  const popRect = pop.getBoundingClientRect();
+  pop.style.left = `${Math.max(8, Math.min(window.innerWidth - popRect.width - 8, rect.left))}px`;
+  pop.style.top = `${Math.min(window.innerHeight - popRect.height - 8, rect.bottom + 6)}px`;
+  pop.querySelector('[data-confirm-cancel]').onclick = hideRssGroupConfirm;
+  pop.querySelector('[data-confirm-delete]').onclick = async () => {
+    hideRssGroupConfirm();
+    await onConfirm();
+  };
+  setTimeout(() => {
+    document.addEventListener('click', function onOuter(event) {
+      if (pop.isConnected && !pop.contains(event.target)) hideRssGroupConfirm();
+      document.removeEventListener('click', onOuter);
+    });
+  }, 0);
+}
+
+function showRssPurgeConfirm(anchor) {
+  const deleted = state.rssSources.filter(s => s.deleted && !s.purged);
+  if (!deleted.length) { toast('没有已删除的订阅源'); return; }
+  showRssPopoverConfirm(anchor, `永久删除全部 ${deleted.length} 个已删除的订阅源？自定义源记录将被清除，内置源保留隐藏配置；均无法再恢复。`, async () => {
+    try {
+      const data = await api('/api/me/sources/purge-deleted', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+      await loadRssSources();
+      toast(`已永久删除 ${data.purged} 个订阅源`);
+    } catch (err) {
+      toast('一键删除失败：' + err.message, 5000);
+    }
+  });
+}
+
+async function deleteRssGroup(name) {
+  const targets = state.rssSources.filter(s => !s.deleted && (s.category || 'article') === name);
+  for (const source of targets) {
+    try {
+      await api(`/api/me/sources/${encodeURIComponent(source.id)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ category: 'article' }),
+      });
+    } catch (err) {
+      toast(`移动 ${source.name} 失败：${err.message}`);
+    }
+  }
+  persistCustomRssGroups(customRssGroups().filter(item => item !== name));
+  if (state.rssCategoryFilter === name) state.rssCategoryFilter = '';
+  await loadRssSources();
+  await loadSources();
+  renderSidebar();
+  toast(`已删除分组「${categoryLabel(name)}」`);
+}
+
 function renderRssSources() {
-  const rows = sources => sources.map(source => {
+  const rows = (sources, emptyText = '暂无订阅源') => sources.map(source => {
     const id = escapeHtml(source.id);
-    return `<article class="rss-source-card"><div class="rss-source-info"><strong class="rss-source-title ${rssArticleAge(source)}">${escapeHtml(source.name)}</strong>
+    return `<article class="rss-source-card"><div class="rss-source-info"><div class="rss-source-head"><strong class="rss-source-title ${rssArticleAge(source)}">${escapeHtml(source.name)}</strong>
       <span class="rss-source-meta">${escapeHtml(CATEGORY_LABELS[source.category] || source.category || '文章')} · ${source.deleted ? '已删除' : source.enabled ? '已启用' : '已停用'} · ${Number(source.entryCount) || 0} 篇文章</span>
-      <p class="rss-source-error">${escapeHtml(rssFetchStatus(source))}</p>${rssLatestArticleHtml(source)}</div>
+      <p class="rss-source-error">${escapeHtml(rssFetchStatus(source))}</p></div>${rssLatestArticleHtml(source)}</div>
       <div class="rss-actions">${source.deleted
         ? `<button type="button" class="ghost-btn" data-rss-action="restore" data-rss-id="${id}">恢复</button>`
         : `<button type="button" class="ghost-btn" data-rss-action="edit" data-rss-id="${id}">编辑</button><button type="button" class="ghost-btn" data-rss-action="toggle" data-rss-id="${id}">${source.enabled ? '停用' : '启用'}</button><button type="button" class="ghost-btn" data-rss-action="delete" data-rss-id="${id}">删除</button>`}</div></article>`;
-  }).join('') || '<p class="rss-empty">暂无订阅源</p>';
-  $('#rss-source-list').innerHTML = rows(visibleRssSources(state.rssSources, state.rssInactiveOnly));
+  }).join('') || `<p class="rss-empty">${emptyText}</p>`;
+  const visible = visibleRssSources(state.rssSources, state.rssInactiveOnly);
+  const filtered = state.rssCategoryFilter
+    ? visible.filter(source => (source.category || 'article') === state.rssCategoryFilter)
+    : visible;
+  const query = String($('#rss-search') ? $('#rss-search').value : '').trim();
+  const ordered = orderedRssSources(filtered, { recentFirst: state.rssRecentFirst, query });
+  $('#rss-source-list').innerHTML = rows(ordered, query ? '没有匹配的订阅源' : state.rssCategoryFilter ? '该分组暂无订阅源' : '暂无订阅源');
   $('#rss-inactive').setAttribute('aria-pressed', String(Boolean(state.rssInactiveOnly)));
-  $('#rss-deleted-list').innerHTML = rows(state.rssSources.filter(source => source.deleted));
-  $('#rss-deleted-count').textContent = state.rssSources.filter(source => source.deleted).length;
+  $('#rss-recent').setAttribute('aria-pressed', String(Boolean(state.rssRecentFirst)));
+  renderRssGroups();
+  $('#rss-deleted-list').innerHTML = rows(state.rssSources.filter(source => source.deleted && !source.purged));
+  $('#rss-deleted-count').textContent = state.rssSources.filter(source => source.deleted && !source.purged).length;
   if (state.rssBusy) setRssBusy(true);
 }
 
@@ -6654,7 +6990,7 @@ async function loadRssSources({ propagateError = false } = {}) {
     renderRssSources();
     $('#rss-status').textContent = `共 ${state.rssSources.filter(source => !source.deleted).length} 个订阅源`;
   } catch (err) {
-    $('#rss-status').textContent = `加载失败：${err.message}。当前列表可能不是最新，可点击重新加载重试。`;
+    $('#rss-status').textContent = `加载失败：${err.message}。当前列表可能不是最新，可刷新页面重试。`;
     if (propagateError) throw err;
   } finally { state.rssLoading = false; }
 }
@@ -6676,7 +7012,7 @@ function editRssSource(source) {
   $('#rss-use-standard').classList.remove('hidden');
   $('#rss-advanced-description').textContent = '此源包含高级抓取配置，默认保留。改用标准 RSS 后，保存会替换原配置及备用抓取方式。';
   $('#rss-name').value = source.name;
-  $('#rss-category').value = source.category || 'article';
+  $('#rss-category').value = categoryLabel(source.category);
   $('#rss-feeds').value = (source.feeds || []).map(feed => typeof feed === 'string' ? feed : JSON.stringify(feed)).join('\n');
   $('#rss-feeds').readOnly = rssFeedsAreAdvanced(source);
   $('#rss-advanced-note').classList.toggle('hidden', !rssFeedsAreAdvanced(source));
@@ -6731,7 +7067,7 @@ async function mutateRssSource(operation, successMessage, onSuccess) {
 async function submitRssSource(event) {
   event.preventDefault();
   const editing = state.rssSources.find(source => source.id === state.rssEditingId);
-  const payload = { name: $('#rss-name').value.trim(), category: $('#rss-category').value };
+  const payload = { name: $('#rss-name').value.trim(), category: normalizeCategoryInput($('#rss-category').value) };
   if (!editing || !rssFeedsAreAdvanced(editing) || state.rssReplaceAdvanced) payload.feeds = $('#rss-feeds').value.split(/\r?\n/).map(value => value.trim()).filter(Boolean);
   if (!payload.name || (payload.feeds && !payload.feeds.length)) { $('#rss-status').textContent = '请填写名称和 RSS 地址。'; return; }
   const endpoint = '/api/me/sources' + (editing ? '/' + encodeURIComponent(editing.id) : '');
@@ -9739,7 +10075,6 @@ $('#reader-pane').addEventListener('click', (e) => {
   e.stopPropagation();
 });
 $('#article-link-open').onclick = openArticleLinkInWindow;
-$('#article-link-submit').onclick = submitArticleLinkToSite;
 $('#mark-read-btn').onclick = async () => {
   if (!requirePersonalIdentity()) return;
   const ids = visibleEntries().map(e => e.id);
@@ -10296,7 +10631,34 @@ $('#rss-source-form').onsubmit = submitRssSource;
 $('#rss-import-form').onsubmit = submitRssImport;
 $('#rss-cancel').onclick = resetRssEditor;
 $('#rss-use-standard').onclick = useStandardRssFeeds;
-$('#rss-reload').onclick = loadRssSources;
+$('#rss-recent').onclick = toggleRecentRssSources;
+$('#rss-deleted-purge').onclick = event => {
+  event.preventDefault();
+  event.stopPropagation();
+  showRssPurgeConfirm(event.currentTarget);
+};
+let rssSearchTimer = null;
+$('#rss-search').oninput = () => {
+  clearTimeout(rssSearchTimer);
+  rssSearchTimer = setTimeout(renderRssSources, 200);
+};
+$('#rss-group-bar').addEventListener('click', async event => {
+  const close = event.target.closest('[data-group-close]');
+  if (close) {
+    event.stopPropagation();
+    showRssGroupConfirm(close.dataset.groupClose, close);
+    return;
+  }
+  if (event.target.closest('#rss-group-add')) {
+    addRssGroup();
+    return;
+  }
+  const chip = event.target.closest('.rss-group-chip');
+  if (chip) {
+    state.rssCategoryFilter = state.rssCategoryFilter === chip.dataset.group ? '' : chip.dataset.group;
+    renderRssSources();
+  }
+});
 $('#rss-inactive').onclick = toggleInactiveRssSources;
 $('#rss-source-list').onclick = handleRssAction;
 $('#rss-deleted-list').onclick = handleRssAction;
@@ -10315,6 +10677,45 @@ document.addEventListener('pointerdown', event => {
 });
 window.addEventListener('resize', () => { closeFeedMenu(false); closeSwipedFeedRows(); if (state.feedDrawerOpen && !isFeedDrawerViewport()) setFeedDrawer(false); });
 $('#feed-groups').addEventListener('scroll', () => closeFeedMenu(false), { passive: true });
+let dragGroupCat = null;
+$('#feed-groups').addEventListener('dragstart', event => {
+  const label = event.target.closest('.group-toggle');
+  if (!label) return;
+  dragGroupCat = label.dataset.category;
+  label.classList.add('dragging');
+  event.dataTransfer.effectAllowed = 'move';
+  try { event.dataTransfer.setData('text/plain', String(dragGroupCat)); } catch { /* IE-style guard */ }
+});
+$('#feed-groups').addEventListener('dragend', () => {
+  document.querySelectorAll('.group-toggle.dragging, .group-toggle.drop-target').forEach(el => el.classList.remove('dragging', 'drop-target'));
+  dragGroupCat = null;
+});
+$('#feed-groups').addEventListener('dragover', event => {
+  const label = event.target.closest('.group-toggle');
+  if (!label || !dragGroupCat || label.dataset.category === dragGroupCat) return;
+  event.preventDefault();
+  event.dataTransfer.dropEffect = 'move';
+  document.querySelectorAll('.group-toggle.drop-target').forEach(el => el.classList.remove('drop-target'));
+  label.classList.add('drop-target');
+});
+$('#feed-groups').addEventListener('drop', event => {
+  const label = event.target.closest('.group-toggle');
+  if (!label || !dragGroupCat) return;
+  event.preventDefault();
+  moveFeedGroup(dragGroupCat, label.dataset.category);
+});
+
+function moveFeedGroup(cat, targetCat) {
+  if (!cat || !targetCat || cat === targetCat) return;
+  const wrap = $('#feed-groups');
+  const draggedLabel = wrap.querySelector(`.group-toggle[data-category="${CSS.escape(cat)}"]`);
+  const draggedItems = wrap.querySelector(`.feed-group-items[data-category="${CSS.escape(cat)}"]`);
+  const targetLabel = wrap.querySelector(`.group-toggle[data-category="${CSS.escape(targetCat)}"]`);
+  if (!draggedLabel || !draggedItems || !targetLabel) return;
+  wrap.insertBefore(draggedLabel, targetLabel);
+  wrap.insertBefore(draggedItems, targetLabel);
+  persistFeedGroupsOrder([...wrap.querySelectorAll('.group-toggle')].map(el => el.dataset.category));
+}
 
 const FEED_SWIPE_OPEN = 112;
 let feedSwipeState = null;
@@ -10559,6 +10960,9 @@ $('#manage-modal').onclick = (e) => { if (e.target.id === 'manage-modal') $('#ma
 $('#submit-link-open').onclick = openSubmitLinkModal;
 $('#submit-link-close').onclick = closeSubmitLinkModal;
 $('#submit-link-modal').onclick = (e) => { if (e.target.id === 'submit-link-modal') closeSubmitLinkModal(); };
+$('#submit-link-url').oninput = () => {
+  if (quickSub.previewUrl && $('#submit-link-url').value.trim() !== quickSub.rawUrl) resetQuickSubPreview();
+};
 $('#submit-link-form').onsubmit = (e) => {
   e.preventDefault();
   submitReaderLink();

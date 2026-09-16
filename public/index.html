@@ -61,9 +61,9 @@
       </div>
 
       <div class="sidebar-actions">
-        <button id="submit-link-open" class="submit-link-open sidebar-submit-link" type="button" title="提交链接" aria-label="提交链接">
-          <span class="submit-icon" data-qm-icon="plus"></span>
-          <span class="submit-label">提交链接</span>
+        <button id="submit-link-open" class="submit-link-open sidebar-submit-link" type="button" title="快速订阅" aria-label="快速订阅">
+          <span class="submit-icon" data-qm-icon="rss"></span>
+          <span class="submit-label">快速订阅</span>
         </button>
       </div>
 
@@ -419,19 +419,20 @@
           <div id="dashboard-ai-mount" class="dashboard-ai-mount"></div>
         </section>
         <section id="dashboard-sources-panel" class="dashboard-panel hidden" aria-label="RSS 订阅源">
-          <div class="rss-heading"><div><h2>RSS 订阅源</h2><p>管理内置源与自定义订阅。停用或删除会停止抓取；已有文章、收藏和阅读历史保留。</p></div><div class="rss-heading-actions"><button id="rss-inactive" class="ghost-btn" type="button" aria-pressed="false">不活跃源</button><button id="rss-reload" class="ghost-btn" type="button">重新加载</button></div></div>
+          <div class="rss-heading"><div><h2>RSS 订阅源</h2><p>管理内置源与自定义订阅。停用或删除会停止抓取；已有文章、收藏和阅读历史保留。</p></div><div class="rss-heading-actions"><button id="rss-inactive" class="ghost-btn" type="button" aria-pressed="false">不活跃源</button><button id="rss-recent" class="ghost-btn" type="button" aria-pressed="false">最近添加</button></div></div>
           <p id="rss-status" class="rss-notice" role="status" aria-live="polite"></p>
           <details id="rss-editor-details" class="rss-box">
             <summary id="rss-editor-title">添加订阅源</summary>
             <form id="rss-source-form" class="rss-form">
               <label>名称<input id="rss-name" required maxlength="200" autocomplete="off"></label>
-              <label>分类<select id="rss-category"><option value="article">文章</option><option value="news">资讯</option><option value="podcast">播客</option></select></label>
+              <label>分类<input id="rss-category" list="rss-category-options" maxlength="24" autocomplete="off" placeholder="文章 / 资讯 / 播客，可自定义"></label>
+              <datalist id="rss-category-options"><option value="文章"></option><option value="资讯"></option><option value="播客"></option></datalist>
               <label class="rss-wide">RSS 地址（每行一个）<textarea id="rss-feeds" rows="3" required placeholder="https://example.com/feed.xml"></textarea></label>
               <div id="rss-advanced-note" class="rss-wide hidden"><p id="rss-advanced-description">此源包含高级抓取配置，默认保留。改用标准 RSS 后，保存会替换原配置及备用抓取方式。</p><button id="rss-use-standard" class="ghost-btn" type="button">改用标准 RSS 地址</button></div>
               <div class="rss-actions rss-wide"><button id="rss-save" class="ghost-btn primary" type="submit">添加订阅</button><button id="rss-cancel" class="ghost-btn" type="button">清空</button></div>
             </form>
           </details>
-          <details class="rss-box"><summary>批量导入 OPML / RSS 地址</summary>
+          <details class="rss-box rss-box-locked" open><summary>批量导入 OPML / RSS 地址</summary>
             <form id="rss-import-form" class="rss-form">
               <label class="rss-wide">导入方式<select id="rss-import-format"><option value="urls">粘贴 RSS 地址</option><option value="opml">上传 OPML 文件</option></select></label>
               <label id="rss-urls-label" class="rss-wide">RSS 地址（每行一个）<textarea id="rss-import-urls" rows="5" placeholder="https://example.com/feed.xml"></textarea></label>
@@ -440,8 +441,11 @@
               <div class="rss-actions rss-wide"><button class="ghost-btn primary" type="submit">开始导入</button></div>
             </form><div id="rss-import-results" aria-live="polite"></div>
           </details>
+          <div class="rss-divider" role="separator"></div>
+          <div id="rss-group-bar" class="rss-group-bar" aria-label="分组管理"></div>
+          <div class="rss-search"><div class="rss-search-box"><input id="rss-search" type="search" placeholder="搜索标题或 RSS 地址" autocomplete="off"><span data-qm-icon="search"></span></div></div>
           <div id="rss-source-list" class="rss-source-list"></div>
-          <details id="rss-deleted-details" class="rss-box"><summary>已删除的订阅源 <span id="rss-deleted-count">0</span></summary><p>恢复后重新显示并恢复抓取，原有阅读数据保持不变。</p><div id="rss-deleted-list" class="rss-source-list"></div></details>
+          <details id="rss-deleted-details" class="rss-box"><summary><span class="rss-deleted-title">已删除的订阅源 <span id="rss-deleted-count">0</span></span><button id="rss-deleted-purge" class="ghost-btn" type="button" title="永久删除全部已删除的订阅源">一键全部删除</button></summary><p>恢复后重新显示并恢复抓取，原有阅读数据保持不变。</p><div id="rss-deleted-list" class="rss-source-list"></div></details>
         </section>
         <section id="dashboard-contributions-panel" class="dashboard-panel hidden">
           <div class="my-asset-tabs" role="tablist" aria-label="我的资产类型">
@@ -602,22 +606,31 @@
     <div class="modal-box submit-link-box">
       <header>
         <div>
-          <h2>提交链接</h2>
-          <p>进入读者提交源，支持点赞、点评和 AI 处理。</p>
+          <h2>快速订阅</h2>
+          <p>粘贴 RSS 地址，预览确认后一键订阅。</p>
         </div>
-        <button id="submit-link-close" class="icon-btn" aria-label="关闭提交链接"><span data-qm-icon="x"></span></button>
+        <button id="submit-link-close" class="icon-btn" aria-label="关闭快速订阅"><span data-qm-icon="x"></span></button>
       </header>
       <form id="submit-link-form" class="submit-link-form">
         <label>
           <span>链接</span>
-          <input id="submit-link-url" type="url" placeholder="https://example.com/article" required />
+          <input id="submit-link-url" type="url" placeholder="https://rsshub.app/twitter/user/xxx" required />
         </label>
         <label>
-          <span>备注</span>
-          <textarea id="submit-link-note" rows="2" placeholder="为什么值得读"></textarea>
+          <span>分类</span>
+          <select id="submit-link-category">
+            <option value="article">文章</option>
+            <option value="news">资讯</option>
+            <option value="podcast">播客</option>
+          </select>
         </label>
+        <label>
+          <span>标题</span>
+          <input id="submit-link-title" type="text" maxlength="120" placeholder="点预览后自动填入，可修改" />
+        </label>
+        <p id="submit-link-meta" class="submit-link-meta hidden"></p>
         <div class="submit-link-actions">
-          <button id="submit-link-submit" class="ghost-btn primary" type="submit">提交</button>
+          <button id="submit-link-submit" class="ghost-btn primary" type="submit">预览</button>
         </div>
       </form>
     </div>
@@ -626,7 +639,6 @@
   <div id="article-link-menu" class="article-link-menu hidden" role="menu" aria-label="链接操作">
     <div id="article-link-menu-url" class="article-link-menu-url"></div>
     <button id="article-link-open" type="button" role="menuitem">打开网页</button>
-    <button id="article-link-submit" type="button" role="menuitem">收录到本站</button>
   </div>
 
   <div id="agent-prompt-modal" class="modal hidden">
@@ -771,7 +783,7 @@
   <div id="toast" class="toast hidden"></div>
 
   <script src="/purify.min.js?v=3.4.11"></script>
-  <script src="/lucide-icons.js?v=5"></script>
+  <script src="/lucide-icons.js?v=6"></script>
   <script src="/app.js?v=171"></script>
 </body>
 </html>

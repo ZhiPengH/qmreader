@@ -14,6 +14,7 @@ function harness() {
     },
     $$: () => [],
     escapeHtml: value => String(value).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]),
+    iconMarkup: icon => `<i>${icon}</i>`,
     api: async (url, options) => { calls.push({ url, options }); return { sources: [] }; },
     loadSources: async () => {}, loadEntries: async () => {}, renderSidebar() {}, updateListTitle() {}, renderList() {}, requirePersonalIdentity() {}, confirm: () => true,
     CATEGORY_LABELS: { article: '文章' }, TextEncoder,
@@ -242,4 +243,3 @@ test('deleting a source refreshes source list before reloading the view', async 
   assert.equal(c.state.filterSource, null);
 
 });
-
