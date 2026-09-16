@@ -6834,8 +6834,8 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
     grid-column: 2 / -1;
   }
   #app.reading {
-    width: 100vw;
-    max-width: 100vw;
+    width: 100%;
+    max-width: 100%;
     overflow: hidden;
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: minmax(0, 1fr) minmax(260px, 38vh);
@@ -6846,7 +6846,7 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
     display: block;
     grid-column: 1 / -1;
     width: 100%;
-    max-width: 100vw;
+    max-width: 100%;
     overflow-x: hidden;
   }
   #app.reading #agent-pane {
@@ -8050,9 +8050,10 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
 }
 
 @media (max-width: 860px) {
+  #reader-toc-rail { display: none !important; }
   #app.reading:not(.reader-immersive) {
-    width: 100vw;
-    max-width: 100vw;
+    width: 100%;
+    max-width: 100%;
     overflow: hidden;
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: minmax(0, 1fr) minmax(260px, 38vh);
@@ -8069,7 +8070,7 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
     display: block;
     grid-column: 1 / -1;
     width: 100%;
-    max-width: 100vw;
+    max-width: 100%;
     overflow-x: hidden;
   }
   #app.reading #context-resizer {
@@ -8900,7 +8901,7 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
     display: block !important;
     grid-column: 1 !important;
     width: 100%;
-    max-width: 100vw;
+    max-width: 100%;
   }
 
   #app.reading:not(.agent-collapsed):not(.reader-immersive) #context-resizer {
