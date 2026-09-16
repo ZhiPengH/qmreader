@@ -27,6 +27,7 @@ const PUBLIC_ORIGIN = process.env.PUBLIC_ORIGIN?.trim()
 const MINUTE_MS = 60 * 1000;
 const HOUR_MS = 60 * MINUTE_MS;
 const DAILY_REFRESH_HOUR_SHANGHAI = 8;
+const offlinePrefetch = require('./lib/offline-prefetch');
 const STARTUP_REFRESH_DELAY_MS = parseInt(process.env.STARTUP_REFRESH_DELAY_MS || '30000', 10);
 const SOURCE_INTERACTION_REFRESH_COOLDOWN_MS = parseInt(process.env.SOURCE_INTERACTION_REFRESH_COOLDOWN_MS || `${5 * MINUTE_MS}`, 10);
 const FRESHNESS_SWEEP_INTERVAL_MS = parseInt(process.env.FRESHNESS_SWEEP_INTERVAL_MS || `${5 * MINUTE_MS}`, 10);
@@ -1938,6 +1939,18 @@ app.get(['/me', '/dashboard', '/admin'], (req, res) => {
   res.type('html').send(renderIndex(req));
 });
 
+app.get('/api/me/offline-prefetch', requirePersonalIdentity, (req, res) => {
+  res.json(offlinePrefetch.getOfflinePrefetchStatus());
+});
+
+app.post('/api/me/offline-prefetch', requirePersonalIdentity, (req, res) => {
+  const wasRunning = offlinePrefetch.getOfflinePrefetchStatus().running;
+  if (!wasRunning) {
+    Promise.resolve(offlinePrefetch.runOfflinePrefetch({ trigger: 'manual' })).catch(() => {});
+  }
+  res.json({ started: !wasRunning, running: true, note: '结果记录在服务端日志' });
+});
+
 app.get('/index.html', (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   res.type('html').send(renderIndex(req));
@@ -3538,5 +3551,6 @@ const httpServer = app.listen(PORT, HOST, () => {
   fetcher.loadDisk();
   scheduleStartupRefresh();
   scheduleDailyRefresh();
+  offlinePrefetch.scheduleOfflinePrefetch();
   scheduleFreshnessRefresh();
 });

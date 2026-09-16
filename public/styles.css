@@ -754,6 +754,27 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   color: var(--text-1);
   cursor: pointer;
 }
+.account-offline-icon {
+  margin-left: auto;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  padding: 5px;
+  border-radius: 6px;
+  color: var(--text-2);
+  cursor: pointer;
+}
+.account-offline-icon:hover {
+  background: var(--bg-2);
+  color: var(--text-0);
+}
+.account-offline-icon:active {
+  transform: scale(0.94);
+}
+.account-offline-icon .app-icon {
+  width: 14px;
+  height: 14px;
+}
 .account-avatar {
   width: 26px;
   height: 26px;

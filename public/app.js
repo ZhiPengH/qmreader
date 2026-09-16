@@ -3356,6 +3356,7 @@ function renderPersonalIdentityState() {
       <span class="account-text">
         <strong>${escapeHtml(state.me.displayName || '读者')}</strong>
       </span>
+      <span class="account-offline-icon" data-offline-prefetch title="手动离线预取全文" aria-label="手动离线预取全文">${iconMarkup('database-arrow-down')}</span>
     `;
     $('#account-info').title = '打开个人后台';
     const unread = Number(state.me.notificationUnreadCount) || 0;
@@ -10184,7 +10185,26 @@ const translationProfileSelect = $('#translation-profile-select');
 if (translationProfileSelect) translationProfileSelect.onchange = (e) => setAiProfileForPurpose('translation', e.target.value);
 const rewriteProfileSelect = $('#rewrite-profile-select');
 if (rewriteProfileSelect) rewriteProfileSelect.onchange = (e) => setAiProfileForPurpose('rewrite', e.target.value);
-$('#account-info').onclick = () => openMyCommentsModal({ tab: 'profile' });
+$('#account-info').onclick = (e) => {
+  if (e.target.closest('[data-offline-prefetch]')) {
+    triggerOfflinePrefetch();
+    return;
+  }
+  openMyCommentsModal({ tab: 'profile' });
+};
+
+async function triggerOfflinePrefetch() {
+  try {
+    const data = await api('/api/me/offline-prefetch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    });
+    toast(data.started ? '离线预取已开始，结果记录在服务端日志' : '离线预取正在进行中');
+  } catch (err) {
+    toast('离线预取触发失败：' + err.message, 5000);
+  }
+}
 $('#account-settings-open')?.addEventListener('click', (e) => {
   e.stopPropagation();
   toggleAccountMenu();

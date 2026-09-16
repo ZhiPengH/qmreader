@@ -24,6 +24,7 @@ const ICONS = [
   ['circle-help', 'CircleHelp'],
   ['copy', 'Copy'],
   ['corner-down-left', 'CornerDownLeft'],
+  ['database-arrow-down', 'DatabaseArrowDown'],
   ['ellipsis', 'Ellipsis'],
   ['ellipsis-vertical', 'EllipsisVertical'],
   ['external-link', 'ExternalLink'],
