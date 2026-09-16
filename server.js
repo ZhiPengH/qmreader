@@ -2111,6 +2111,13 @@ function rewriteResponse(entry, viewer = null, assetId = '') {
   };
 }
 
+function summaryResponse(entry) {
+  const summary = store.getSummary(entry.id);
+  if (!summary) return null;
+  const stale = Boolean(summary.contentHash && summary.contentHash !== deepseek.rewriteContentHash(entry));
+  return { ...summary, stale };
+}
+
 async function translateMissingTitles(limit = TITLE_TRANSLATION_LIMIT) {
   if (!deepseek.getConfig().configured) return 0;
   const entries = fetcher.getEntries({ limit: 1000 })
@@ -3140,6 +3147,35 @@ app.post('/api/entry/:id/rewrite', requirePersonalIdentity, async (req, res) => 
     });
   } catch (e) {
     sendError(res, e, 'rewrite failed');
+  }
+});
+
+app.get('/api/entry/:id/summary', (req, res) => {
+  const entry = fetcher.getEntryById(req.params.id);
+  if (!entry) return res.status(404).json({ error: 'entry not found' });
+  res.json({ summary: summaryResponse(entry) });
+});
+
+app.post('/api/entry/:id/summary', requirePersonalIdentity, async (req, res) => {
+  const entry = fetcher.getEntryById(req.params.id);
+  if (!entry) return res.status(404).json({ error: 'entry not found' });
+  try {
+    const prepared = await prepareEntryForAiAsset(entry, 'Summary', { productHuntOfficialSite: false });
+    const result = await deepseek.summarizeEntry(prepared.entry, {
+      ...requestAiConfig(req),
+      author: requestAuthor(req),
+      userId: req.user.id,
+      force: Boolean(req.body && req.body.force),
+    });
+    res.json({
+      ...result,
+      summary: summaryResponse(prepared.entry) || result.summary,
+      originalFetched: prepared.fetched,
+      originalFetchError: prepared.error || null,
+      entry: prepared.fetched ? prepared.entry : undefined,
+    });
+  } catch (e) {
+    sendError(res, e, 'summary failed');
   }
 });
 

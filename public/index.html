@@ -237,6 +237,17 @@
           <button class="reader-tab active" type="button" data-tab="original">原文</button>
           <button class="reader-tab" type="button" data-tab="rewrite">中文改写</button>
         </div>
+        <details id="reader-summary" class="reader-summary hidden">
+          <summary><span>AI 摘要</span><span id="reader-summary-hint" class="reader-summary-hint"></span></summary>
+          <div class="reader-summary-body">
+            <div id="summary-content" class="summary-content"></div>
+            <div id="summary-empty" class="asset-empty hidden"><p>还没有生成中文摘要。</p></div>
+            <div class="reader-summary-foot">
+              <span id="summary-meta" class="asset-meta-line hidden"></span>
+              <button id="summary-regenerate" class="ghost-btn hidden" type="button">重新生成</button>
+            </div>
+          </div>
+        </details>
         <section id="reader-original-panel" class="reader-tab-panel annotation-surface-panel" data-annotation-surface="original">
           <div id="reader-content" class="reader-content"></div>
           <aside id="annotation-margin-original" class="annotation-margin" aria-label="原文划线讨论"></aside>

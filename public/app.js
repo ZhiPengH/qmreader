@@ -681,6 +681,10 @@ const state = {
   rewriteLoading: false,
   rewriteGenerating: false,
   pendingRewriteGenerate: false,
+  summary: null,
+  summaryLoading: false,
+  summaryGenerating: false,
+  summaryError: '',
   readerTab: 'original',
   defaultReaderTab: DEFAULT_READER_OPEN_TAB,
   profileDefaultReaderTabDraft: DEFAULT_READER_OPEN_TAB,
@@ -4994,6 +4998,7 @@ function setReaderTab(tab, { syncUrl = true, replaceUrl = true } = {}) {
   $('#reader-translation').classList.toggle('hidden', next !== 'translation');
   $('#reader-rewrite-panel').classList.toggle('hidden', next !== 'rewrite');
   updateReaderTocVisibility(next);
+  updateSummaryVisibility(next);
   updateReaderLanguageProfile();
   applyTextAnnotations();
   if (syncUrl) syncReaderUrl({ replace: replaceUrl });
@@ -5436,6 +5441,123 @@ async function generateRewrite({ force = false } = {}) {
     const copyTextForEntry = rewriteUiCopy(state.activeEntry || entry);
     if (!state.rewrite) btn.textContent = copyTextForEntry.action;
     else btn.textContent = state.rewrite.stale ? copyTextForEntry.stale : copyTextForEntry.redo;
+  }
+}
+
+function summaryAiConfig() {
+  return aiConfigForPurpose('summary');
+}
+
+function updateSummaryVisibility(tab = state.readerTab) {
+  const block = $('#reader-summary');
+  if (!block) return;
+  block.classList.toggle('hidden', tab !== 'original' || !state.activeEntry);
+}
+
+function renderSummary() {
+  const block = $('#reader-summary');
+  if (!block) return;
+  const content = $('#summary-content');
+  const empty = $('#summary-empty');
+  const meta = $('#summary-meta');
+  const redo = $('#summary-regenerate');
+  const hint = $('#reader-summary-hint');
+  content.innerHTML = '';
+  if (meta) {
+    meta.textContent = '';
+    meta.classList.add('hidden');
+  }
+  if (redo) redo.classList.add('hidden');
+  if (state.summaryGenerating) {
+    empty.classList.add('hidden');
+    content.innerHTML = '<p class="summary-pending">正在生成中文摘要…</p>';
+    if (hint) hint.textContent = '生成中';
+    return;
+  }
+  if (state.summary && state.summary.body) {
+    empty.classList.add('hidden');
+    content.innerHTML = renderMarkdownLite(state.summary.body);
+    const metaText = [state.summary.model, formatAssetTime(state.summary.updatedAt)].filter(Boolean).join(' · ');
+    if (meta) {
+      meta.textContent = metaText;
+      meta.classList.remove('hidden');
+    }
+    if (redo) redo.classList.remove('hidden');
+    if (hint) hint.textContent = state.summary.stale ? '原文已更新' : '';
+    return;
+  }
+  content.innerHTML = '';
+  empty.classList.remove('hidden');
+  const emptyText = $('#summary-empty p');
+  if (emptyText) emptyText.textContent = state.summaryError ? ('生成失败：' + state.summaryError) : '还没有生成中文摘要。';
+  if (state.summaryError && redo) redo.classList.remove('hidden');
+  if (hint) hint.textContent = '';
+}
+
+function entryIsEnglishForSummary(entry = state.activeEntry) {
+  const sample = [entry?.title || '', entry?.summary || '', entry?.content || '']
+    .filter(Boolean)
+    .join('\n')
+    .slice(0, 4000);
+  if (!sample.trim()) return false;
+  return readerLanguageProfile(sample) === 'latin';
+}
+
+function maybeAutoGenerateSummary(entry) {
+  const block = $('#reader-summary');
+  if (!entry || !block || block.classList.contains('hidden') || state.summaryGenerating) return;
+  if (!entryIsEnglishForSummary()) return;
+  block.open = true;
+  renderSummary();
+  if (!state.summary?.body) generateSummary();
+}
+
+async function loadSummary(entry) {
+  state.summaryLoading = true;
+  state.summary = null;
+  state.summaryError = '';
+  renderSummary();
+  try {
+    const data = await api(`/api/entry/${entry.id}/summary`);
+    if (state.activeEntry?.id !== entry.id) return;
+    state.summary = data.summary || null;
+  } catch {
+    state.summary = null;
+  } finally {
+    state.summaryLoading = false;
+    if (state.activeEntry?.id === entry.id) {
+      renderSummary();
+      maybeAutoGenerateSummary(entry);
+    }
+  }
+}
+
+async function generateSummary({ force = false } = {}) {
+  const entry = state.activeEntry;
+  if (!entry) return;
+  if (state.summary && state.summary.body && !force) return;
+  if (state.summaryGenerating) return;
+  if (!requirePersonalIdentity()) return;
+  state.summaryGenerating = true;
+  state.summaryError = '';
+  renderSummary();
+  try {
+    const data = await api(`/api/entry/${entry.id}/summary`, {
+      method: 'POST',
+      aiConfig: summaryAiConfig(),
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ force }),
+    });
+    if (state.activeEntry?.id !== entry.id) return;
+    if (data.entry) applyServerEntryUpdate(data.entry);
+    state.summary = data.summary || null;
+    toast(data.cached ? '中文摘要已缓存' : data.originalFetched ? '已获取原文并生成中文摘要' : '中文摘要已生成');
+  } catch (err) {
+    state.summaryError = err.message || '未知错误';
+    toast('摘要生成失败：' + state.summaryError, 5000);
+  } finally {
+    state.summaryGenerating = false;
+    if (state.activeEntry?.id === entry.id) renderSummary();
   }
 }
 
@@ -7971,6 +8093,10 @@ async function openEntry(e, { tab = null, focus = null, aiAssetId = '', commentI
   state.rewriteLoading = false;
   state.rewriteGenerating = false;
   state.pendingRewriteGenerate = false;
+  state.summary = null;
+  state.summaryLoading = false;
+  state.summaryGenerating = false;
+  state.summaryError = '';
   state.readerFocus = requestedFocus;
   state.readerAssetId = requestedAssetId;
   state.readerAssetsExpanded = false;
@@ -7992,6 +8118,7 @@ async function openEntry(e, { tab = null, focus = null, aiAssetId = '', commentI
   setReaderTab(requestedTab, { syncUrl: false });
   loadTranslation(e);
   loadRewrite(e);
+  loadSummary(e);
   loadAnnotations(e);
   loadComments(e);
   loadAgentMessages(e);
@@ -8043,6 +8170,10 @@ function closeReaderFromRoute({ rerenderList = true } = {}) {
   state.rewriteLoading = false;
   state.rewriteGenerating = false;
   state.pendingRewriteGenerate = false;
+  state.summary = null;
+  state.summaryLoading = false;
+  state.summaryGenerating = false;
+  state.summaryError = '';
   state.readerFocus = null;
   state.readerAssetId = '';
   state.readerAssetsExpanded = false;
@@ -8194,6 +8325,10 @@ async function reload({ keepReader = false, clearUrl = true } = {}) {
     state.rewriteLoading = false;
     state.rewriteGenerating = false;
     state.pendingRewriteGenerate = false;
+    state.summary = null;
+    state.summaryLoading = false;
+    state.summaryGenerating = false;
+    state.summaryError = '';
     state.readerFocus = null;
     state.readerAssetId = '';
     state.readerAssetsExpanded = false;
@@ -9716,6 +9851,17 @@ $('#reader-prefs-toggle').onclick = () => setReaderPrefsOpen(!state.readerPrefsO
 $('#reader-prefs-close').onclick = () => setReaderPrefsOpen(false);
 const readerAssetsToggle = $('#reader-assets-toggle');
 if (readerAssetsToggle) readerAssetsToggle.onclick = () => setReaderAssetsExpanded(!state.readerAssetsExpanded);
+const readerSummaryBlock = $('#reader-summary');
+if (readerSummaryBlock) {
+  readerSummaryBlock.addEventListener('toggle', () => {
+    updateSummaryVisibility();
+    if (readerSummaryBlock.open && !state.summary?.body && !state.summaryGenerating && !state.summaryLoading) {
+      generateSummary();
+    }
+  });
+}
+const summaryRegenerateBtn = $('#summary-regenerate');
+if (summaryRegenerateBtn) summaryRegenerateBtn.onclick = () => generateSummary({ force: true });
 const readerTocRail = $('#reader-toc-rail');
 if (readerTocRail) {
   readerTocRail.addEventListener('click', e => {
