@@ -2254,7 +2254,18 @@ function openFeedMenu(id, trigger) {
     if (action === 'pin') togglePinSource(id);
     if (action === 'delete') deleteSourceFromSidebar(id);
   });
-  root.addEventListener('keydown', event => {
+    root.querySelectorAll('.feed-menu-main [data-menu-action]').forEach(button => {
+    button.addEventListener('pointerenter', event => {
+      if (event.pointerType !== 'mouse') return;
+      const sub = root.querySelector('.feed-category-menu');
+      if (button.dataset.menuAction === 'move') {
+        if (sub.hidden) showFeedCategories(true);
+      } else if (!sub.hidden) {
+        showFeedCategories(false);
+      }
+    });
+  });
+root.addEventListener('keydown', event => {
     if (event.key === 'Tab') { closeFeedMenu(); return; }
     if (event.key === 'Escape') {
       event.preventDefault(); event.stopPropagation();
@@ -2311,6 +2322,7 @@ async function deleteSourceFromSidebar(id) {
   try {
     await api('/api/me/sources/' + encodeURIComponent(id), { method: 'DELETE' });
     if (state.filterSource === id) state.filterSource = null;
+    await loadSources();
     await reload();
   } catch (error) {
     toast('删除失败：' + error.message);

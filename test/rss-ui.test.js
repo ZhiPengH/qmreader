@@ -208,3 +208,38 @@ test('sidebar unread counts fall back to a cached unfiltered base', () => {
   assert.equal(c.unreadCountFor(e => e.sourceId === 's2', c.state.entriesAll), 1);
   assert.equal(c.unreadCountFor(e => e.sourceId === 's2'), 0);
 });
+
+test('deleting a source refreshes source list before reloading the view', async () => {
+
+  const section = (start, end) => source.slice(source.indexOf(start), source.indexOf(end, source.indexOf(start)));
+
+  const calls = [];
+
+  const c = vm.createContext({
+
+    sourceById: () => ({ id: 'rss-x', name: 'X' }),
+
+    state: { filterSource: 'rss-x' },
+
+    api: async url => { calls.push(['api', url]); },
+
+    loadSources: async () => { calls.push(['loadSources']); },
+
+    reload: async () => { calls.push(['reload']); },
+
+    confirm: () => true,
+
+    toast() {},
+
+  });
+
+  vm.runInContext(section('async function deleteSourceFromSidebar(', 'function entryAssetItems('), c);
+
+  await c.deleteSourceFromSidebar('rss-x');
+
+  assert.deepEqual(calls, [['api', '/api/me/sources/rss-x'], ['loadSources'], ['reload']]);
+
+  assert.equal(c.state.filterSource, null);
+
+});
+
