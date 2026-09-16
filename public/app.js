@@ -1246,7 +1246,7 @@ function fileToAvatarDataUrl(file) {
 
 function renderInlineMarkdown(value) {
   return String(value || '')
-    .replace(/!\[([^\]]*)\]\((https?:\/\/[^)\s]+)\)/g, (_, alt, src) => `<img src="${src}" alt="${alt}" loading="lazy" referrerpolicy="no-referrer" />`)
+    .replace(/!\[([^\]]*)\]\((https?:\/\/[^)\s]+)\)/g, (_, alt, src) => `<img src="${src}" alt="${alt}" loading="${eager ? 'eager' : 'lazy'}" decoding="async" referrerpolicy="no-referrer" />`)
     .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, (_, label, href) => `<a href="${href}" target="_blank" rel="noopener">${label}</a>`)
     .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
     .replace(/`([^`]+)`/g, '<code>$1</code>');
@@ -1371,13 +1371,13 @@ function faviconTargetUrl(siteUrl, domain) {
   return domain ? `https://${domain}` : '';
 }
 
-function faviconHtml(siteUrl, name, size = 17) {
+function faviconHtml(siteUrl, name, size = 17, eager = false) {
   const d = domainOf(siteUrl);
   const letter = ((name || '?').trim()[0] || '?').toUpperCase();
   const safeSize = Math.max(12, Math.min(Number(size) || 17, 48));
   if (!d) return `<span class="letter-icon" style="--icon-size:${safeSize}px">${escapeHtml(letter)}</span>`;
   const src = `/favicons?domain_url=${encodeURIComponent(faviconTargetUrl(siteUrl, d))}&sz=${Math.max(32, safeSize * 4)}`;
-  return `<img class="favicon" style="--icon-size:${safeSize}px" src="${escapeHtml(src)}" loading="lazy" referrerpolicy="no-referrer"
+  return `<img class="favicon" style="--icon-size:${safeSize}px" src="${escapeHtml(src)}" loading="${eager ? 'eager' : 'lazy'}" decoding="async" referrerpolicy="no-referrer"
     onerror="fallbackFavicon(this, '${escapeJsString(letter)}')" />`;
 }
 
@@ -1993,7 +1993,7 @@ function renderSidebar() {
         </div>`}
         <div class="feed-item-main">
           <button type="button" class="feed-item" data-id="${escapeHtml(s.id)}">
-            ${faviconHtml(s.siteUrl, s.name)}
+            ${faviconHtml(s.siteUrl, s.name, 17, true)}
             <span class="fname" title="${escapeHtml(s.name)}">${escapeHtml(s.name)}</span>
             ${s.pinned ? '<span class="pin-mark" title="已置顶">' + iconMarkup('pin') + '</span>' : ''}
             ${s.status === 'error' ? '<span class="err-dot" title="抓取失败"></span>' : ''}

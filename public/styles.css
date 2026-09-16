@@ -4844,7 +4844,8 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
 }
 
 .favicon {
-  background: transparent;
+  background: var(--bg-2);
+  border-radius: 5px;
 }
 .letter-icon {
   background: var(--bg-2);

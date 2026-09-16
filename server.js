@@ -128,6 +128,7 @@ let autoRewriteRunning = false;
 let autoRewriteLast = null;
 const sourceInteractionRefreshAt = new Map();
 const faviconCache = new Map();
+const FAVICON_DISK_CACHE_FILE = path.join(process.env.QMREADER_DATA_DIR ? path.resolve(process.env.QMREADER_DATA_DIR) : path.join(__dirname, 'data'), 'favicon-cache.json');
 const faviconInFlight = new Map();
 const FAVICON_MAX_BYTES = 256 * 1024;
 const FAVICON_CACHE_MAX_ENTRIES = 512;
@@ -244,10 +245,37 @@ function cacheFavicon(cacheKey, value) {
   while (faviconCache.size > FAVICON_CACHE_MAX_ENTRIES) {
     faviconCache.delete(faviconCache.keys().next().value);
   }
+  scheduleFaviconDiskCacheWrite();
+}
+
+function loadFaviconDiskCache() {
+  try {
+    const raw = fs.readFileSync(FAVICON_DISK_CACHE_FILE, 'utf8');
+    const parsed = JSON.parse(raw);
+    for (const [key, value] of Object.entries(parsed || {})) {
+      if (!value || !value.buffer || !value.type) continue;
+      faviconCache.set(key, { buffer: Buffer.from(value.buffer, 'base64'), type: value.type, at: Number(value.at) || 0 });
+    }
+  } catch { /* first boot or unreadable cache */ }
+}
+loadFaviconDiskCache();
+let faviconDiskCacheTimer = null;
+function scheduleFaviconDiskCacheWrite() {
+  if (faviconDiskCacheTimer) return;
+  faviconDiskCacheTimer = setTimeout(() => {
+    faviconDiskCacheTimer = null;
+    try {
+      const entries = Array.from(faviconCache.entries())
+        .slice(-FAVICON_CACHE_MAX_ENTRIES)
+        .map(([key, value]) => [key, { buffer: value.buffer.toString('base64'), type: value.type, at: value.at }]);
+      fs.writeFileSync(FAVICON_DISK_CACHE_FILE, JSON.stringify(Object.fromEntries(entries)));
+    } catch { /* disk cache is best-effort */ }
+  }, 5000);
+  faviconDiskCacheTimer.unref?.();
 }
 
 function sendFavicon(res, value) {
-  res.setHeader('Cache-Control', 'public, max-age=86400');
+  res.setHeader('Cache-Control', 'public, max-age=604800');
   res.setHeader('Content-Security-Policy', 'sandbox');
   res.setHeader('X-Content-Type-Options', 'nosniff');
   return res.type(value.type).send(value.buffer);
