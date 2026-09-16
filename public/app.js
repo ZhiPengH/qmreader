@@ -689,6 +689,8 @@ const state = {
   readerImmersive: storage.getItem('qm_reader_immersive') === '1',
   readerAssetsExpanded: false,
   readerTocAvailable: false,
+  readerTocActiveId: '',
+  readerTocScrollRaf: 0,
   readerFocus: null,
   readerAssetId: '',
   pendingAssetJump: null,
@@ -4809,15 +4811,30 @@ function updateFetchOriginalButton(entry = state.activeEntry) {
 }
 
 function updateReaderTocVisibility(tab = state.readerTab) {
-  const toc = $('#reader-toc');
-  if (!toc) return;
-  toc.classList.toggle('hidden', tab !== 'original' || !state.readerTocAvailable);
+  const rail = $('#reader-toc-rail');
+  if (!rail) return;
+  const visible = tab === 'original' && state.readerTocAvailable;
+  rail.classList.toggle('hidden', !visible);
+  rail.classList.remove('open');
+  if (visible) {
+    positionReaderTocRail();
+    updateReaderTocActive();
+  }
+}
+
+function positionReaderTocRail() {
+  const rail = $('#reader-toc-rail');
+  const pane = $('#reader-pane');
+  if (!rail || !pane || rail.classList.contains('hidden')) return;
+  const rect = pane.getBoundingClientRect();
+  if (!rect.width || !rect.height) return;
+  rail.style.top = `${Math.round(rect.top + rect.height / 2)}px`;
+  rail.style.right = `${Math.max(6, Math.round(window.innerWidth - rect.right + 14))}px`;
 }
 
 function renderReaderToc(root = $('#reader-content')) {
-  const toc = $('#reader-toc');
-  const list = $('#reader-toc-list');
-  if (!toc || !list || !root) return;
+  const rail = $('#reader-toc-rail');
+  if (!rail || !root) return;
   const headings = [...root.querySelectorAll('h2,h3,h4')]
     .map((el, index) => {
       const text = el.textContent.replace(/\s+/g, ' ').trim();
@@ -4829,16 +4846,39 @@ function renderReaderToc(root = $('#reader-content')) {
     .slice(0, 24);
   state.readerTocAvailable = headings.length >= 2;
   if (!state.readerTocAvailable) {
-    toc.open = false;
-    list.innerHTML = '';
+    rail.innerHTML = '';
     updateReaderTocVisibility();
     return;
   }
-  toc.open = false;
-  list.innerHTML = headings.map(item => `
-    <a class="reader-toc-link reader-toc-${item.level}" href="#${escapeHtml(item.id)}">${escapeHtml(item.text)}</a>
-  `).join('');
+  rail.innerHTML = headings.map(item => `
+    <a class="reader-toc-rail-item reader-toc-rail-${item.level}" href="#${escapeHtml(item.id)}" title="${escapeHtml(item.text)}">
+      <span class="reader-toc-rail-label">${escapeHtml(item.text)}</span>
+      <span class="reader-toc-rail-mark"></span>
+    </a>`).join('');
   updateReaderTocVisibility();
+}
+
+function updateReaderTocActive() {
+  const rail = $('#reader-toc-rail');
+  const pane = $('#reader-pane');
+  const content = $('#reader-content');
+  if (!rail || !pane || !content || rail.classList.contains('hidden')) return;
+  const paneTop = pane.getBoundingClientRect().top;
+  let activeId = '';
+  for (const el of content.querySelectorAll('h2,h3,h4')) {
+    if (el.getBoundingClientRect().top - paneTop <= 100) activeId = el.id;
+    else break;
+  }
+  const links = rail.querySelectorAll('.reader-toc-rail-item');
+  if (!activeId && links.length) activeId = String(links[0].getAttribute('href') || '').slice(1);
+  if (activeId === state.readerTocActiveId) return;
+  state.readerTocActiveId = activeId;
+  links.forEach(link => {
+    const current = link.getAttribute('href') === `#${activeId}`;
+    link.classList.toggle('active', current);
+    if (current) link.setAttribute('aria-current', 'true');
+    else link.removeAttribute('aria-current');
+  });
 }
 
 function renderOriginalContent(entry, content) {
@@ -9676,12 +9716,40 @@ $('#reader-prefs-toggle').onclick = () => setReaderPrefsOpen(!state.readerPrefsO
 $('#reader-prefs-close').onclick = () => setReaderPrefsOpen(false);
 const readerAssetsToggle = $('#reader-assets-toggle');
 if (readerAssetsToggle) readerAssetsToggle.onclick = () => setReaderAssetsExpanded(!state.readerAssetsExpanded);
-$('#reader-toc').onclick = (e) => {
-  const link = e.target.closest('a[href^="#reader-section-"]');
-  if (!link) return;
-  e.preventDefault();
-  scrollReaderTarget(link.getAttribute('href'), { offset: 58 });
-};
+const readerTocRail = $('#reader-toc-rail');
+if (readerTocRail) {
+  readerTocRail.addEventListener('click', e => {
+    const link = e.target.closest('a[href^="#reader-section-"]');
+    if (!link) return;
+    e.preventDefault();
+    if (!readerTocRail.classList.contains('open') && !readerTocRail.matches(':hover')) {
+      readerTocRail.classList.add('open');
+      return;
+    }
+    scrollReaderTarget(link.getAttribute('href'), { offset: 58 });
+    readerTocRail.classList.remove('open');
+  });
+  readerTocRail.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && readerTocRail.classList.contains('open')) {
+      e.preventDefault();
+      readerTocRail.classList.remove('open');
+    }
+  });
+  readerTocRail.addEventListener('focusout', () => {
+    if (!readerTocRail.contains(document.activeElement)) readerTocRail.classList.remove('open');
+  });
+}
+const readerTocScrollPane = $('#reader-pane');
+if (readerTocScrollPane) readerTocScrollPane.addEventListener('scroll', () => {
+  if (state.readerTocScrollRaf) return;
+  state.readerTocScrollRaf = requestAnimationFrame(() => {
+    state.readerTocScrollRaf = 0;
+    updateReaderTocActive();
+  });
+}, { passive: true });
+window.addEventListener('resize', positionReaderTocRail);
+const readerTocAppRoot = document.getElementById('app');
+if (readerTocAppRoot) new MutationObserver(positionReaderTocRail).observe(readerTocAppRoot, { attributes: true, attributeFilter: ['class'] });
 $('#reader-assets').onclick = (e) => {
   const btn = e.target.closest('[data-asset]');
   if (!btn) return;
