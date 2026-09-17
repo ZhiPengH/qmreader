@@ -8682,7 +8682,7 @@ async function reload({ keepReader = false, clearUrl = true } = {}) {
   }
 }
 
-function selectSource(id) {
+async function selectSource(id) {
   state.view = 'all';
   const nextSource = state.filterSource === id ? null : id;
   state.filterSource = nextSource;
@@ -8693,7 +8693,11 @@ function selectSource(id) {
   state.readerFocus = null;
   state.readerAssetId = '';
   if (nextSource) hintSourceRefresh(nextSource, 'source-select');
-  reload();
+  await reload();
+  if (nextSource && state.filterSource === nextSource) {
+    const newest = visibleEntries()[0];
+    if (newest) await openEntry(newest);
+  }
 }
 function selectCategory(cat) {
   state.view = 'all';
