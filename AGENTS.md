@@ -2,6 +2,7 @@
 
 - 本仓库基于 qmreader，供纵览News开发；遵守[全局约定](/Users/huangzhipeng/.codex/AGENTS.md)。
 - 续作先读[唯一当前工作记录](/Users/huangzhipeng/Documents/App-ZhiXing/NookDeck/docs/zonglan-news.md)，核对当前决定、阶段、NEWS-001、结对实操分工和精确停点。重要决定、阶段结果与下一步更新到该记录，不在本仓库复制维护正文。
+- 涉及 Hermes 方寸独立凭据认证或跨 Agent 接手时，先读[方寸认证交接](docs/fangcun-auth-handoff.md)定位源码、运行入口和验收证据；该文档是交接快照，持续进度仍维护在上述唯一工作记录。
 - 首次关键操作由用户亲手完成，具体分工以工作记录为准；助手检查或解释不等于用户已经完成练习。
 - 修改前检查实际分支与未提交内容，保留他人修改；验证范围与本次改动相称，不把源码检查当成运行验收。
 - 不因普通开发任务自动 commit、merge、push、迁移数据或部署。
