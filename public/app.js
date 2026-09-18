@@ -737,6 +737,7 @@ function routeStateFromUrl() {
   const params = new URLSearchParams(window.location.search);
   const pathMatch = window.location.pathname.match(/^\/assets(?:\/([^/.]+))?\/?$/);
   const favoritesPath = /^\/favorites\/?$/.test(window.location.pathname);
+  const plazaPath = /^\/plaza\/?$/.test(window.location.pathname) || params.get('from') === 'plaza';
   const contributorMatch = window.location.pathname.match(/^\/contributors\/([^/?#]+)\/?$/);
   const dashboardPath = /^\/(?:me|dashboard)\/?$/.test(window.location.pathname);
   const adminPath = /^\/admin\/?$/.test(window.location.pathname);
@@ -777,7 +778,7 @@ function routeStateFromUrl() {
     contributorAssetType: contributorMatch ? normalizeUserAssetTab(params.get('type')) : 'translation',
     contributorAssetSort: contributorMatch && params.get('sort') === 'helpful' ? 'helpful' : 'latest',
     tab: routeReaderTab,
-    view: favoritesPath ? 'favorites' : (isAssetPath || params.get('view') === 'assets' ? 'assets' : ''),
+    view: plazaPath ? 'hot' : favoritesPath ? 'favorites' : (isAssetPath || params.get('view') === 'assets' ? 'assets' : ''),
     assetFilter: isAssetPath ? pathAssetFilter : queryAssetFilter,
     assetSort: params.get('sort') === 'helpful' ? 'helpful' : 'latest',
     contributorSort: 'latest',
@@ -868,6 +869,7 @@ function splitArticleLocator(locator) {
 }
 
 function listRouteTitle(view = state.view, assetFilter = state.assetFilter, q = state.q) {
+  if (view === 'hot') return '广场 · 纵览News';
   if (view === 'favorites') {
     return q ? `最爱 · “${q}” · QMReader` : '最爱 · QMReader';
   }
@@ -900,6 +902,7 @@ function readerUrlFor(entry = state.activeEntry, tab = state.readerTab, focus = 
       ? 'rewrite'
       : '';
     url.pathname = `/articles/${encodeURIComponent(entryArticleLocator(entry))}`;
+    if (state.view === 'hot') url.searchParams.set('from', 'plaza');
     if (nextFocus) {
       url.pathname += `/${nextFocus}`;
       if (assetId) url.pathname += `/${encodeURIComponent(assetId)}`;
@@ -958,7 +961,7 @@ function copyReaderLink() {
   const url = readerUrlFor(entry, tab, focus, state.readerAssetId);
   document.title = readerRouteTitle(entry, focus);
   if (url.href !== window.location.href) {
-    history.replaceState({ entryId: entry.id, tab, focus }, '', url);
+    history.replaceState({ ...history.state, entryId: entry.id, tab, focus }, '', url);
   }
   copyText(url.href, focus && ASSET_FOCUS_LABELS[focus] ? `${ASSET_FOCUS_LABELS[focus]}链接已复制` : '文章链接已复制');
 }
@@ -1013,7 +1016,9 @@ function listUrlFor(view = state.view, assetFilter = state.assetFilter) {
   url.pathname = '/';
   url.search = '';
   url.hash = '';
-  if (view === 'assets') {
+  if (view === 'hot') {
+    url.pathname = '/plaza';
+  } else if (view === 'assets') {
     url.pathname = assetFilter && ASSET_FILTER_TYPES.includes(assetFilter)
       ? `/assets/${assetFilter}`
       : '/assets';
@@ -1063,6 +1068,7 @@ function adminUrlFor() {
 
 function setWorkspacePage(page = '') {
   const next = page === 'dashboard' || page === 'contributor' || page === 'admin' ? page : '';
+  if (next && typeof plaza !== 'undefined' && plaza.snapshot().active) leavePlaza();
   state.workspacePage = next;
   const app = $('#app');
   app.classList.toggle('workspace-page-open', Boolean(next));
@@ -1090,7 +1096,7 @@ function syncReaderUrl({ replace = false, commentId = '', annotationId = '', cha
   document.title = readerRouteTitle(entry, focus);
   if (url.href === window.location.href) return;
   const method = replace ? 'replaceState' : 'pushState';
-  history[method]({ entryId: entry.id, tab: state.readerTab, commentId, annotationId, chatMessageId }, '', url);
+  history[method]({ ...history.state, entryId: entry.id, tab: state.readerTab, commentId, annotationId, chatMessageId, plazaReturn: state.view === 'hot' }, '', url);
 }
 
 function syncListUrl({ replace = false } = {}) {
@@ -1098,7 +1104,7 @@ function syncListUrl({ replace = false } = {}) {
   document.title = listRouteTitle();
   if (url.href === window.location.href) return;
   const method = replace ? 'replaceState' : 'pushState';
-  history[method]({ view: state.view, assetFilter: state.assetFilter }, '', url);
+  history[method]({ ...history.state, entryId: null, view: state.view, assetFilter: state.assetFilter, plazaReturn: false }, '', url);
 }
 
 function clearReaderUrl({ replace = true } = {}) {
@@ -1726,11 +1732,14 @@ function pollHintedSourceRefresh(sourceId) {
 }
 
 async function loadEntries() {
+  if (state.view === 'hot') return plaza.activate();
+  const requestView = state.view;
   const p = new URLSearchParams();
   if (state.filterSource) p.set('source', state.filterSource);
   if (state.filterCategory) p.set('category', state.filterCategory);
   if (state.q && state.view !== 'assets') p.set('q', state.q);
   const data = await api('/api/entries?' + p.toString());
+  if (state.view !== requestView) return;
   state.entries = data.entries;
   state.entryRenderLimit = ENTRY_RENDER_BATCH_SIZE;
   const filtered = Boolean(state.filterSource || state.filterCategory || (state.q && state.view !== 'assets'));
@@ -1862,10 +1871,6 @@ function isEntrySourceEnabled(entry) {
   return Boolean(source && source.enabled && !source.deleted);
 }
 
-function hotEntryCount(entries = state.entries) {
-  return entries.filter(entry => isEntrySourceEnabled(entry) && entryQualityScore(entry) > 0.4).length;
-}
-
 function mergeEntryStats(entryId, stats = {}, { rerenderList = true } = {}) {
   const id = String(entryId || stats.entryId || '').trim();
   if (!id) return;
@@ -1876,6 +1881,7 @@ function mergeEntryStats(entryId, stats = {}, { rerenderList = true } = {}) {
     state.activeEntry = { ...state.activeEntry, stats: normalized };
     renderReaderStatsUi();
   }
+  if (state.view === 'hot') plaza.update({ id, stats: normalized });
   if (rerenderList) renderList();
 }
 
@@ -2084,7 +2090,7 @@ function renderSidebar() {
   }
 
   $('#count-all').textContent = state.entries.filter(isEntrySourceEnabled).length || '';
-  $('#count-hot').textContent = hotEntryCount() || '';
+  $('#count-hot').textContent = '';
   $('#count-unread').textContent = unreadCountFor(() => true) || '';
   $('#count-starred').textContent = state.starred.size || '';
   $('#count-history').textContent = state.history.size || '';
@@ -2210,17 +2216,10 @@ function visibleContributors() {
 }
 
 function visibleEntries() {
+  if (state.view === 'hot') return plaza.visibleEntries();
   let list = ['starred', 'history', 'assets'].includes(state.view) ? state.entries : state.entries.filter(isEntrySourceEnabled);
   if (state.view === 'favorites') list = list.filter(e => pinnedSourceIds().has(e.sourceId));
-  if (state.view === 'hot') {
-    list = list
-      .slice()
-      .sort((a, b) => {
-        const scoreDelta = entryQualityScore(b) - entryQualityScore(a);
-        return scoreDelta || (Number(b.publishedTs) || 0) - (Number(a.publishedTs) || 0);
-      })
-      .slice(0, 80);
-  }
+
   if (state.view === 'unread') list = list.filter(e => !state.read.has(e.id));
   if (state.view === 'starred') list = list.filter(e => state.starred.has(e.id));
   if (state.view === 'history') {
@@ -2825,6 +2824,7 @@ function renderListScopeBar() {
 }
 
 function selectListScope(scope = 'latest') {
+  if (scope === 'hot') return selectView('hot');
   const next = ['latest', 'hot', 'unread'].includes(scope) ? scope : 'latest';
   if (next === 'latest') {
     state.view = 'all';
@@ -3379,6 +3379,10 @@ function updateEntryAssets(entryId, patch = {}, { rerenderList = true } = {}) {
     renderReaderAssets(state.activeEntry);
     renderReaderAssetSummary(state.activeEntry);
   }
+  if (state.view === 'hot') {
+    const entry = plaza.visibleEntries().find(item => item.id === entryId);
+    if (entry) plaza.update({ id: entryId, assets: mergeAssets(entry, patch) });
+  }
   if (rerenderList) renderList();
 }
 
@@ -3386,6 +3390,7 @@ function applyServerEntryUpdate(entry) {
   if (!entry || !entry.id) return null;
   const current = state.activeEntry && state.activeEntry.id === entry.id ? state.activeEntry : {};
   const updated = { ...current, ...entry };
+  if (state.view === 'hot') plaza.update(entry);
   const idx = state.entries.findIndex(item => item.id === entry.id);
   if (idx >= 0) state.entries[idx] = { ...state.entries[idx], ...updated, content: undefined };
   if (updated.content) contentCache.set(updated.id, updated.content);
@@ -3676,6 +3681,13 @@ function renderContributorDirectory() {
 }
 
 function renderList() {
+  if (state.view === 'hot') {
+    for (const item of plaza.visibleEntries()) {
+      const read = state.read.has(item.id);
+      if (Boolean(item.read) !== read) plaza.update({ id: item.id, read });
+    }
+    return;
+  }
   $('#app').classList.toggle('view-assets', state.view === 'assets');
   $('#app').classList.toggle('view-favorites', state.view === 'favorites');
   $('#app').classList.toggle('home-assets', isHomeScope() && state.homeTab === 'assets');
@@ -3700,8 +3712,6 @@ function renderList() {
       ? '还没有沉淀资产<br/>先翻译、重写、点评或对话一篇文章'
       : state.view === 'history'
       ? '还没有浏览记录<br/>打开几篇文章后会出现在这里'
-      : state.view === 'hot'
-      ? '还没有足够反馈<br/>提交链接、点赞或收藏后会逐步形成热门列表'
       : state.view === 'favorites'
       ? '还没有置顶的订阅源<br/>点击订阅源“…”或左滑，置顶到最爱'
       : '这里空空如也<br/>试试刷新或切换视图';
@@ -3826,7 +3836,7 @@ function updateListTitle() {
   let title = '全部';
   if (state.filterSource) title = sourceById(state.filterSource)?.name || state.filterSource;
   else if (state.filterCategory) title = CATEGORY_LABELS[state.filterCategory];
-  else if (state.view === 'hot') title = '热门';
+  else if (state.view === 'hot') title = '广场';
   else if (state.view === 'unread') title = '未读';
   else if (state.view === 'starred') title = '收藏';
   else if (state.view === 'history') title = '浏览记录';
@@ -5372,21 +5382,24 @@ function copyTranslationText() {
 }
 
 async function loadTranslation(entry) {
+  const requestToken = state.readerRequestToken;
   state.translationLoading = true;
   renderTranslation(null, { loading: true });
   try {
     const assetId = state.readerFocus === 'translation' ? state.readerAssetId : '';
     const query = assetId ? `?assetId=${encodeURIComponent(assetId)}` : '';
     const data = await api(`/api/entry/${entry.id}/translation${query}`);
-    if (state.activeEntry?.id !== entry.id) return;
+    if (state.activeEntry?.id !== entry.id || state.readerRequestToken !== requestToken) return;
     renderTranslation(data.translation);
     if (data.translation && Array.isArray(data.translation.content) && data.translation.content.length) {
       updateEntryAssets(entry.id, entryAssetHelpfulPatch('translation', data.translation), { rerenderList: false });
       renderList();
     }
   } catch {
+    if (state.activeEntry?.id !== entry.id || state.readerRequestToken !== requestToken) return;
     renderTranslation(null);
   } finally {
+    if (state.activeEntry?.id !== entry.id || state.readerRequestToken !== requestToken) return;
     state.translationLoading = false;
     if (state.pendingTranslationGenerate && state.activeEntry?.id === entry.id && state.readerTab === 'translation' && !state.translation) {
       state.pendingTranslationGenerate = false;
@@ -5455,21 +5468,24 @@ function copyRewriteText() {
 }
 
 async function loadRewrite(entry) {
+  const requestToken = state.readerRequestToken;
   state.rewriteLoading = true;
   renderRewrite(null);
   try {
     const assetId = state.readerFocus === 'rewrite' ? state.readerAssetId : '';
     const query = assetId ? `?assetId=${encodeURIComponent(assetId)}` : '';
     const data = await api(`/api/entry/${entry.id}/rewrite${query}`);
-    if (state.activeEntry?.id !== entry.id) return;
+    if (state.activeEntry?.id !== entry.id || state.readerRequestToken !== requestToken) return;
     renderRewrite(data.rewrite);
     if (data.rewrite && data.rewrite.body) {
       updateEntryAssets(entry.id, entryAssetHelpfulPatch('rewrite', data.rewrite), { rerenderList: false });
       renderList();
     }
   } catch {
+    if (state.activeEntry?.id !== entry.id || state.readerRequestToken !== requestToken) return;
     renderRewrite(null);
   } finally {
+    if (state.activeEntry?.id !== entry.id || state.readerRequestToken !== requestToken) return;
     state.rewriteLoading = false;
     if (state.activeEntry?.id === entry.id) maybeGenerateRewriteAfterLoad(entry);
   }
@@ -5709,17 +5725,20 @@ function maybeAutoGenerateSummary(entry) {
 }
 
 async function loadSummary(entry) {
+  const requestToken = state.readerRequestToken;
   state.summaryLoading = true;
   state.summary = null;
   state.summaryError = '';
   renderSummary();
   try {
     const data = await api(`/api/entry/${entry.id}/summary`);
-    if (state.activeEntry?.id !== entry.id) return;
+    if (state.activeEntry?.id !== entry.id || state.readerRequestToken !== requestToken) return;
     state.summary = data.summary || null;
   } catch {
+    if (state.activeEntry?.id !== entry.id || state.readerRequestToken !== requestToken) return;
     state.summary = null;
   } finally {
+    if (state.activeEntry?.id !== entry.id || state.readerRequestToken !== requestToken) return;
     state.summaryLoading = false;
     if (state.activeEntry?.id === entry.id) {
       renderSummary();
@@ -6435,16 +6454,18 @@ function copyAnnotationLink(annotationId) {
 }
 
 async function loadAnnotations(entry) {
+  const requestToken = state.readerRequestToken;
   state.annotations = [];
   renderAnnotations();
   try {
     const data = await api(`/api/entry/${entry.id}/annotations`);
-    if (state.activeEntry?.id !== entry.id) return;
+    if (state.activeEntry?.id !== entry.id || state.readerRequestToken !== requestToken) return;
     state.annotations = data.annotations || [];
     updateEntryAssets(entry.id, annotationAssetPatch(state.annotations), { rerenderList: false });
     renderAnnotations();
     renderList();
   } catch {
+    if (state.activeEntry?.id !== entry.id || state.readerRequestToken !== requestToken) return;
     renderAnnotations();
   }
 }
@@ -8066,16 +8087,18 @@ function insertCommentTemplate(type) {
 }
 
 async function loadComments(entry) {
+  const requestToken = state.readerRequestToken;
   state.comments = [];
   state.editingCommentId = '';
   renderComments();
   try {
     const data = await api(`/api/entry/${entry.id}/comments`);
-    if (state.activeEntry?.id !== entry.id) return;
+    if (state.activeEntry?.id !== entry.id || state.readerRequestToken !== requestToken) return;
     state.comments = data.comments || [];
     updateEntryAssets(entry.id, { comments: state.comments.length });
     renderComments();
   } catch {
+    if (state.activeEntry?.id !== entry.id || state.readerRequestToken !== requestToken) return;
     renderComments();
   }
 }
@@ -8401,15 +8424,17 @@ function renderAgent() {
 }
 
 async function loadAgentMessages(entry) {
+  const requestToken = state.readerRequestToken;
   state.agentMessages = [];
   renderAgent();
   try {
     const data = await api(`/api/entry/${entry.id}/chat`);
-    if (state.activeEntry?.id !== entry.id) return;
+    if (state.activeEntry?.id !== entry.id || state.readerRequestToken !== requestToken) return;
     state.agentMessages = data.messages || [];
     updateEntryAssets(entry.id, { chatMessages: state.agentMessages.length });
     renderAgent();
   } catch {
+    if (state.activeEntry?.id !== entry.id || state.readerRequestToken !== requestToken) return;
     renderAgent();
   }
 }
@@ -8455,6 +8480,9 @@ async function sendAgentMessage(text) {
 }
 
 async function openEntry(e, { tab = null, focus = null, aiAssetId = '', commentId = '', annotationId = '', chatMessageId = '', updateUrl = true, replaceUrl = false } = {}) {
+  const openRequest = (state.readerRequestToken || 0) + 1;
+  state.readerRequestToken = openRequest;
+  if (state.view === 'hot') plaza.beginReader(e);
   setWorkspacePage('');
   const previousEntryId = state.activeEntry?.id || '';
   if (previousEntryId && previousEntryId !== e.id) {
@@ -8548,18 +8576,26 @@ async function openEntry(e, { tab = null, focus = null, aiAssetId = '', commentI
   renderEntryStateUi();
 
   // content is loaded lazily — the list API omits it to stay lightweight
+  $('#plaza-reader-error').hidden = true;
   let content = e.content || contentCache.get(e.id);
   if (!content) {
     $('#reader-content').innerHTML = '<p style="color:var(--text-2)">加载内容中…</p>';
     try {
       const data = await api(`/api/entry/${e.id}`);
+      if (state.readerRequestToken !== openRequest) return;
       if (data.entry && state.activeEntry?.id === e.id) {
         state.activeEntry = { ...state.activeEntry, ...data.entry };
       }
       content = data.entry && data.entry.content;
       contentCache.set(e.id, content || '');
-    } catch { /* fall through to summary */ }
-    if (state.activeEntry?.id !== e.id) return; // user moved on
+    } catch (err) {
+      if (state.view === 'hot' && state.activeEntry?.id === e.id && state.readerRequestToken === openRequest) {
+        $('#plaza-reader-error').hidden = false;
+        $('#plaza-reader-error-text').textContent = '正文加载失败：' + err.message;
+      }
+      // Keep the original summary fallback while exposing a retry in plaza.
+    }
+    if (state.activeEntry?.id !== e.id || state.readerRequestToken !== openRequest) return; // user moved on
   }
   renderOriginalContent(state.activeEntry || e, content);
   updateFetchOriginalButton(state.activeEntry || e);
@@ -8567,6 +8603,7 @@ async function openEntry(e, { tab = null, focus = null, aiAssetId = '', commentI
 }
 
 function closeReaderFromRoute({ rerenderList = true } = {}) {
+  state.readerRequestToken = (state.readerRequestToken || 0) + 1;
   setWorkspacePage('');
   state.activeEntry = null;
   state.agentMessages = [];
@@ -8609,18 +8646,44 @@ function closeReaderFromRoute({ rerenderList = true } = {}) {
 async function openEntryById(entryId, { tab = null, focus = null, aiAssetId = '', commentId = '', annotationId = '', chatMessageId = '', updateUrl = false, replaceUrl = true } = {}) {
   const id = String(entryId || '').trim();
   if (!id) return false;
-  let entry = state.entries.find(item => item.id === id);
+  const requestToken = state.readerRequestToken, requestView = state.view;
+  let entry = state.view === 'hot' ? plaza.visibleEntries().find(item => item.id === id || item.id.startsWith(id)) : state.entries.find(item => item.id === id);
+  if (!entry && state.view === 'hot' && plaza.snapshot().order.includes(id)) {
+    // Deep link into a later page: hydrate real metadata instead of pretending pages were loaded.
+    const data = await api('/api/plaza/entries?ids=' + encodeURIComponent(id));
+    const hydrated = data.entries.find(item => item.id === id);
+    if (hydrated && state.readerRequestToken === requestToken && state.view === requestView) {
+      plaza.hydrate(hydrated);
+      entry = await (async () => { const full = await api(`/api/entry/${encodeURIComponent(id)}`); return full.entry; })();
+    }
+  }
   if (!entry) {
     const data = await api(`/api/entry/${encodeURIComponent(id)}`);
     entry = data.entry;
   }
-  if (!entry) return false;
+  if (!entry || state.readerRequestToken !== requestToken || state.view !== requestView) return false;
   await openEntry(entry, { tab, focus, aiAssetId, commentId, annotationId, chatMessageId, updateUrl, replaceUrl });
   return true;
 }
 
 async function openEntryFromUrl({ reuseLoadedCollections = false } = {}) {
   const route = routeStateFromUrl();
+  const plazaRouteToken = (state.plazaRouteToken || 0) + 1;
+  state.plazaRouteToken = plazaRouteToken;
+  if (route.view === 'hot') {
+    await enterPlaza({ push: false });
+    if (state.view !== 'hot' || state.plazaRouteToken !== plazaRouteToken) return false;
+    if (!route.entryId) { closePlazaReader({ syncUrl: false }); return false; }
+    try { return await openEntryById(route.entryId, { tab: route.tab, focus: route.focus, aiAssetId: route.assetId, commentId: route.commentId, annotationId: route.annotationId, chatMessageId: route.chatMessageId }); }
+    catch (err) {
+      if (state.plazaRouteToken === plazaRouteToken) { toast('文章加载失败：' + err.message, 5000); closePlazaReader(); }
+      return false;
+    }
+  }
+  if (typeof plaza !== 'undefined' && plaza.snapshot().active) {
+    leavePlaza();
+    state.view = 'all';
+  }
   if (route.admin) {
     state.view = 'all';
     state.filterSource = null;
@@ -8717,7 +8780,11 @@ async function openEntryFromUrl({ reuseLoadedCollections = false } = {}) {
 
 /* ---------- Navigation ---------- */
 async function reload({ keepReader = false, clearUrl = true } = {}) {
+  if (state.view === 'hot') { await plaza.checkStatus(); return; }
+  if (typeof plaza !== 'undefined' && plaza.snapshot().active) leavePlaza();
+  const requestView = state.view;
   await Promise.all([loadEntries(), loadContributors()]);
+  if (state.view !== requestView) return;
   updateListTitle();
   renderList();
   renderSidebar();
@@ -8786,6 +8853,7 @@ function selectCategory(cat) {
   reload();
 }
 function selectView(v) {
+  if (v === 'hot') return enterPlaza();
   state.view = v;
   state.filterSource = null;
   state.filterCategory = null;
@@ -9833,9 +9901,9 @@ function setLeftCollapsed(collapsed) {
 
 function readerWorkbenchWidthBudget({ includeContext = !state.agentCollapsed } = {}) {
   const viewport = window.innerWidth || document.documentElement.clientWidth || 1280;
-  const sidebarWidth = state.leftCollapsed ? 0 : (state.sidebarCollapsed ? 64 : 232);
-  const entryWidth = state.leftCollapsed ? 0 : ENTRY_PANE_MIN_WIDTH;
-  const listResizerWidth = state.leftCollapsed ? 0 : 4;
+  const sidebarWidth = state.view === 'hot' ? (state.sidebarCollapsed ? 64 : 232) : state.leftCollapsed ? 0 : (state.sidebarCollapsed ? 64 : 232);
+  const entryWidth = state.view === 'hot' || state.leftCollapsed ? 0 : ENTRY_PANE_MIN_WIDTH;
+  const listResizerWidth = state.view === 'hot' || state.leftCollapsed ? 0 : 4;
   const contextWidth = includeContext ? CONTEXT_PANE_MIN_WIDTH : 0;
   const contextResizerWidth = includeContext ? 4 : 0;
   return sidebarWidth + entryWidth + listResizerWidth + minimumReaderPaneWidth() + contextResizerWidth + contextWidth;
@@ -9849,6 +9917,7 @@ function shouldAutoCollapseContext() {
 }
 
 function shouldCollapseLeftForContext() {
+  if (state.view === 'hot') return false;
   if (!state.activeEntry || state.readerImmersive || state.leftCollapsed) return false;
   const viewport = window.innerWidth || document.documentElement.clientWidth || 1280;
   if (viewport <= 980) return false;
@@ -10190,6 +10259,7 @@ $('#reader-star').onclick = async () => {
 async function setReaderReaction(reaction) {
   const entry = state.activeEntry;
   if (!entry) return;
+  if (state.view === 'hot') return plaza.react(entry.id, reaction);
   if (!requirePersonalIdentity()) return;
   const stats = entryStats(entry);
   const next = stats.reactionByMe === reaction ? '' : reaction;
@@ -11190,6 +11260,7 @@ async function openVisibleEntryWithMotion(entry, direction) {
 }
 
 function moveVisibleEntry(delta, { notifyEdge = false } = {}) {
+  if (state.view === 'hot') return plaza.move(delta);
   const list = visibleEntries();
   if (!list.length) {
     if (notifyEdge) toast('当前列表没有文章');
@@ -11226,6 +11297,19 @@ function moveReaderVersion(delta) {
 document.addEventListener('keydown', (e) => {
   const editable = isShortcutEditableTarget(e.target);
   if (e.key === 'Escape') {
+    if (state.view === 'hot' && plaza.closeOverlays()) { e.preventDefault(); return; }
+    if (state.view === 'hot' && state.readerImmersive) { setReaderImmersive(false); return; }
+    // While reading inside the plaza, give the original app's overlays one Escape each before closing the reader.
+    if (state.view === 'hot' && state.activeEntry) {
+      let closedOriginal = false;
+      if (state.readerPrefsOpen) { setReaderPrefsOpen(false); closedOriginal = true; }
+      if ($('#ai-config-modal') && !$('#ai-config-modal').classList.contains('hidden')) { $('#ai-config-modal').classList.add('hidden'); closedOriginal = true; }
+      if ($('#manage-modal') && !$('#manage-modal').classList.contains('hidden')) { $('#manage-modal').classList.add('hidden'); closedOriginal = true; }
+      if ($('#submit-link-modal') && !$('#submit-link-modal').classList.contains('hidden')) { $('#submit-link-modal').classList.add('hidden'); closedOriginal = true; }
+      if ($('#agent-prompt-modal') && !$('#agent-prompt-modal').classList.contains('hidden')) { $('#agent-prompt-modal').classList.add('hidden'); closedOriginal = true; }
+      if (!closedOriginal) closePlazaReader();
+      return;
+    }
     if (state.readerImmersive) setReaderImmersive(false);
     setReaderPrefsOpen(false);
     document.getElementById('app').classList.remove('reading');
@@ -11240,7 +11324,7 @@ document.addEventListener('keydown', (e) => {
     else if (state.workspacePage === 'admin') closeAdminPage();
     return;
   }
-  if (editable || e.metaKey || e.ctrlKey) return;
+  if (editable || e.metaKey || e.ctrlKey || e.target.closest('dialog[open], .plaza-tag-pop:not([hidden]), #plaza-reader-tags:not([hidden])')) return;
   if (e.key === 'j' || (e.key === 'ArrowDown' && e.target.closest('#entry-pane'))) {
     e.preventDefault();
     moveVisibleEntry(1, { notifyEdge: e.key === 'j' });
@@ -11292,6 +11376,62 @@ window.addEventListener('resize', () => {
   if (state.contextPaneWidth) setContextPaneWidth(state.contextPaneWidth, { persist: false });
 });
 $('#reader-pane').addEventListener('scroll', hideArticleLinkMenu, { passive: true });
+
+/* ---------- Plaza bridge ---------- */
+// Explicit adapter: no global state export, reader cloning, or API monkeypatching.
+const plaza = window.QMPlaza.create({
+  root: $('#plaza-root'), storage, api,
+  icon: name => lucideIcon(name), plainText: plainTextFromHtml,
+  aiConfig: () => summaryAiConfig(),
+  openAiSettings: () => openAiConfigModal('请先配置候选标签使用的 AI 模型'),
+  isVisible: () => !document.hidden,
+  capturePosition: trigger => ({ scrollTop: $('#plaza-root').scrollTop, focus: trigger || document.activeElement }),
+  restorePosition: saved => {
+    $('#plaza-root').scrollTop = saved.scrollTop;
+    saved.focus?.focus?.({ preventScroll: true });
+  },
+  openEntry: (entry, options) => openEntry(entry, options),
+  closeReader: () => closeReaderFromRoute({ rerenderList: false }),
+  mergeStats: (id, stats) => mergeEntryStats(id, stats, { rerenderList: false }),
+  toggleSidebar: () => setFeedDrawer(!state.feedDrawerOpen),
+  edge: delta => toast(delta > 0 ? '已是本批最后一篇' : '已是本批第一篇'),
+});
+async function enterPlaza({ push = true } = {}) {
+  if (!plaza.snapshot().active) closeReaderFromRoute({ rerenderList: false });
+  else if (push) closePlazaReader({ syncUrl: false });
+  state.view = 'hot'; state.filterSource = null; state.filterCategory = null; state.assetFilter = null; state.q = '';
+  setWorkspacePage('');
+  $('#app').classList.add('plaza-active');
+  $('#plaza-root').hidden = false;
+  updateListTitle(); renderSidebar();
+  if (push) syncListUrl();
+  await plaza.activate();
+}
+function leavePlaza() {
+  state.plazaRouteToken = (state.plazaRouteToken || 0) + 1;
+  plaza.deactivate();
+  $('#app').classList.remove('plaza-active');
+  $('#plaza-root').hidden = true;
+}
+function closePlazaReader({ syncUrl = true } = {}) {
+  state.plazaRouteToken = (state.plazaRouteToken || 0) + 1;
+  state.readerRequestToken = (state.readerRequestToken || 0) + 1;
+  plaza.close();
+  if (syncUrl) syncListUrl({ replace: true });
+}
+$('#plaza-reader-close').onclick = () => closePlazaReader();
+$('#plaza-reader-retry').onclick = () => {
+  if (!state.activeEntry) return;
+  contentCache.delete(state.activeEntry.id);
+  return openEntry({ ...state.activeEntry, content: '' }, { tab: state.readerTab, focus: state.readerFocus, updateUrl: false });
+};
+$('#plaza-reader-tags-toggle').onclick = () => {
+  if (!state.activeEntry) return;
+  if (!$('#plaza-reader-tags').hidden) plaza.closeOverlays();
+  else plaza.showReaderTags(state.activeEntry.id);
+};
+setInterval(() => { if (state.view === 'hot') plaza.checkStatus(); }, 45000);
+document.addEventListener('visibilitychange', () => { if (state.view === 'hot' && !document.hidden) plaza.checkStatus(); });
 
 /* ---------- Init ---------- */
 (async function init() {

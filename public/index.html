@@ -8,6 +8,7 @@
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="shortcut icon" href="/favicon.svg" />
   <link rel="stylesheet" href="/styles.css?v=162" />
+  <link rel="stylesheet" href="/plaza.css?v=1" />
   <meta name="description" content="围绕 RSS 文章沉淀中文翻译、乔木风格重写、人工点评和文章对话的公开阅读站。" />
   <link rel="canonical" href="https://rss.qiaomu.ai/" />
   <meta property="og:site_name" content="QMReader" />
@@ -55,7 +56,7 @@
       <div class="views">
         <button class="view-btn active" data-view="all"><span class="view-ico" data-qm-icon="newspaper"></span><span class="view-label">全部</span><span class="count" id="count-all"></span></button>
         <button class="view-btn" data-view="unread"><span class="view-ico" data-qm-icon="circle-dot"></span><span class="view-label">未读</span><span class="count" id="count-unread"></span></button>
-        <button class="view-btn" data-view="hot"><span class="view-ico" data-qm-icon="flame"></span><span class="view-label">热门</span><span class="count" id="count-hot"></span></button>
+        <button class="view-btn" data-view="hot"><span class="view-ico" data-qm-icon="boxes"></span><span class="view-label">广场</span><span class="count" id="count-hot"></span></button>
         <button class="view-btn" data-view="favorites"><span class="view-ico" data-qm-icon="pin"></span><span class="view-label">最爱</span><span class="count" id="count-favorites"></span></button>
         <button class="view-btn" data-view="starred"><span class="view-ico" data-qm-icon="star"></span><span class="view-label">收藏</span><span class="count" id="count-starred"></span></button>
         <button class="view-btn" data-view="history"><span class="view-ico" data-qm-icon="history"></span><span class="view-label">历史</span><span class="count" id="count-history"></span></button>
@@ -127,7 +128,7 @@
       </header>
       <div id="list-scope-bar" class="list-scope-bar" role="tablist" aria-label="文章列表模式">
         <button class="list-scope-btn active" type="button" data-list-scope="latest">最新</button>
-        <button class="list-scope-btn" type="button" data-list-scope="hot">热门</button>
+        <button class="list-scope-btn" type="button" data-list-scope="hot">广场</button>
         <button class="list-scope-btn" type="button" data-list-scope="unread">未读</button>
       </div>
       <div id="asset-activity-strip" class="asset-activity-strip hidden"></div>
@@ -138,6 +139,8 @@
     <button id="left-collapse-toggle" class="icon-btn left-collapse-toggle" type="button" title="收起左侧" aria-label="收起左侧" aria-pressed="false">
       <span data-qm-icon="panel-left-close"></span>
     </button>
+
+    <section id="plaza-root" aria-label="广场" hidden></section>
 
     <!-- ===== Reader ===== -->
     <section id="reader-pane">
@@ -188,6 +191,8 @@
           <div id="reader-asset-summary" class="reader-asset-summary hidden"></div>
           <div class="reader-toolbar">
             <div class="reader-toolbar-main">
+              <button id="plaza-reader-close" class="ghost-btn plaza-reader-control" type="button" aria-label="关闭阅读，返回广场"><span data-qm-icon="arrow-left"></span>返回广场</button>
+              <button id="plaza-reader-tags-toggle" class="ghost-btn plaza-reader-control" type="button" aria-expanded="false"><span data-qm-icon="hash"></span>兴趣标签</button>
               <button id="reader-copy-link" class="ghost-btn reader-toolbar-icon" type="button" title="复制文章内容" aria-label="复制文章内容"><span data-qm-icon="file-text"></span><span class="button-label">复制文章内容</span></button>
               <button id="reader-star" class="reader-action-pill" type="button" aria-label="收藏这篇文章"></button>
               <button id="reader-like" class="reader-action-pill" type="button" aria-label="点赞这篇文章"></button>
@@ -198,6 +203,8 @@
               <button id="reader-delete" class="ghost-btn danger reader-delete reader-toolbar-icon hidden" type="button" title="删除页面" aria-label="删除页面"><span data-qm-icon="trash-2"></span><span class="button-label">删除页面</span></button>
             </div>
           </div>
+          <section id="plaza-reader-tags" aria-label="文章兴趣标签" hidden></section>
+          <div id="plaza-reader-error" class="plaza-error" role="alert" hidden><span id="plaza-reader-error-text"></span> <button id="plaza-reader-retry" class="plaza-btn" type="button">重试加载正文</button></div>
           <div id="reader-preferences" class="reader-preferences hidden" aria-label="字体设置">
             <div class="reader-pref-head">
               <strong>字体设置</strong>
@@ -807,6 +814,7 @@
 
   <script src="/purify.min.js?v=3.4.11"></script>
   <script src="/lucide-icons.js?v=6"></script>
+  <script src="/plaza.js?v=1"></script>
   <script src="/app.js?v=171"></script>
 </body>
 </html>

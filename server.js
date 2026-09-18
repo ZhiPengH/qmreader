@@ -9,6 +9,15 @@ const deepseek = require('./lib/deepseek');
 const { requestAiConfig } = require('./lib/request-ai-config');
 const store = require('./lib/store');
 const subscriptions = require('./lib/subscriptions');
+const { rankPlazaEntries } = require('./lib/plaza');
+const { createPlazaTagger } = require('./lib/plaza-tags');
+// Automatic spending is opt-in pending a confirmed budget. Manual default: 100/day.
+const plazaAutoLimit = Number(process.env.PLAZA_AUTO_TAG_DAILY_LIMIT);
+const plazaAutoEnabled = /^[1-9]\d*$/.test(process.env.PLAZA_AUTO_TAG_DAILY_LIMIT || '') && Number.isSafeInteger(plazaAutoLimit);
+const plazaTagger = createPlazaTagger({
+  store, classify: deepseek.classifyEntryTopics, inputParts: deepseek.topicInputParts,
+  autoEnabled: plazaAutoEnabled, dailyLimit: plazaAutoEnabled ? plazaAutoLimit : 100,
+});
 
 const app = express();
 app.disable('x-powered-by');
@@ -3167,6 +3176,72 @@ app.post('/api/entry/:id/view', (req, res) => {
   } catch (e) {
     sendError(res, e, 'record entry view failed');
   }
+});
+
+function plazaMetadata(entry) {
+  const source = fetcher.getSourceById(entry.sourceId);
+  return { ...entry, sourceName: entry.sourceName || source?.name || entry.sourceId, category: entry.category || source?.category || '' };
+}
+
+function plazaPreferences(userId) {
+  const preferences = store.getPlazaPreferences(userId);
+  return { ...preferences, ignored: preferences.ignored.map(plazaMetadata) };
+}
+
+// Strict query validation: reject unknown keys, repeated keys, and malformed scalars with 400 instead of silently repairing.
+function plazaQueryError(query, { allowed = {}, integers = [] } = {}) {
+  for (const key of Object.keys(query)) {
+    const rule = allowed[key];
+    if (!rule) return `unsupported query parameter: ${key}`;
+    const raw = query[key];
+    if (Array.isArray(raw)) return `query parameter must not repeat: ${key}`;
+    if (!rule.test(String(raw))) return `invalid ${key}: ${raw}`;
+  }
+  for (const key of integers) {
+    if (!(key in query)) continue;
+    const raw = String(query[key]);
+    if (!/^\d+$/.test(raw) || (raw.length > 1 && raw.startsWith('0')) || !Number.isSafeInteger(Number(raw))) return `invalid ${key}: ${raw}`;
+  }
+  return '';
+}
+
+app.get('/api/plaza', requirePersonalIdentity, (req, res) => {
+  try {
+    const invalid = plazaQueryError(req.query, {
+      allowed: { mode: /^(all|random|personal)$/, sort: /^(latest|oldest)$/, unread: /^[01]$/, seed: /^[\w.-]{1,64}$/, limit: /^\d+$/ },
+      integers: ['limit'],
+    });
+    if (invalid) return res.status(400).json({ error: invalid });
+    if (req.query.limit !== undefined && (Number(req.query.limit) < 1 || Number(req.query.limit) > 100)) return res.status(400).json({ error: 'limit must be between 1 and 100' });
+    const revision = store.getPlazaLibraryStatus().revision;
+    const preferences = plazaPreferences(req.user.id);
+    const entries = rankPlazaEntries(store.getPlazaEntries({ userId: req.user.id, maxRowId: revision }), {
+      mode: req.query.mode || 'all', sort: req.query.sort || 'latest', seed: req.query.seed || '',
+      unreadOnly: req.query.unread === '1', interests: preferences.interests,
+    });
+    res.json({ order: entries.map(entry => entry.id), entries: entries.slice(0, Number(req.query.limit || 24)).map(plazaMetadata),
+      total: entries.length, revision, preferences, tagging: plazaTagger.state(req.user.id) });
+  } catch (error) { sendError(res, error); }
+});
+
+app.get('/api/plaza/entries', requirePersonalIdentity, (req, res) => {
+  try {
+    const invalid = plazaQueryError(req.query, { allowed: { ids: /^[\w.:-]+(,[\w.:-]+)*$/ } });
+    if (invalid) return res.status(400).json({ error: invalid });
+    if (typeof req.query.ids !== 'string') return res.status(400).json({ error: 'ids is required' });
+    const ids = req.query.ids.split(',');
+    if (ids.length > 100) return res.status(400).json({ error: 'ids must contain 1 to 100 entry ids' });
+    if (ids.some(id => id.length > 128)) return res.status(400).json({ error: 'entry id too long' });
+    res.json({ entries: store.getPlazaEntries({ userId: req.user.id, ids }).map(plazaMetadata) });
+  } catch (error) { sendError(res, error); }
+});
+
+app.get('/api/plaza/status', requirePersonalIdentity, (req, res) => {
+  try {
+    const invalid = plazaQueryError(req.query, { allowed: { after: /^\d+$/ }, integers: ['after'] });
+    if (invalid) return res.status(400).json({ error: invalid });
+    res.json({ ...store.getPlazaLibraryStatus(Number(req.query.after || 0)), tagging: plazaTagger.state(req.user.id) });
+  } catch (error) { sendError(res, error); }
 });
 
 app.post('/api/entry/:id/reaction', requirePersonalIdentity, (req, res) => {
