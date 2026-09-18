@@ -3416,6 +3416,16 @@ function renderPersonalIdentityState() {
   $('#identity-status').textContent = state.identityStatus === 'loading' ? '正在加载个人数据…' : '个人数据不可用，请重新加载';
   $('#account-info')?.classList.toggle('hidden', !loggedIn);
   $('#account-settings-open')?.classList.toggle('hidden', !loggedIn);
+  // 侧栏 logo 位：登录后显示个人头像，点击进入个人后台；未登录回落品牌 logo（返回全部）
+  const brandAvatar = $('#brand-avatar');
+  const brandLogo = $('#brand-logo');
+  if (brandAvatar && brandLogo) {
+    brandAvatar.innerHTML = avatarHtml(state.me, 'brand-avatar-img');
+    brandAvatar.classList.toggle('hidden', !loggedIn);
+    brandLogo.classList.toggle('hidden', loggedIn);
+    $('#brand-home').title = loggedIn ? '打开个人后台' : '返回全部';
+    $('#brand-home').setAttribute('aria-label', loggedIn ? '打开个人后台' : '返回全部');
+  }
   if (!loggedIn) {
     setAccountMenuOpen(false);
   }
@@ -3425,7 +3435,6 @@ function renderPersonalIdentityState() {
       <span class="account-text">
         <strong>${escapeHtml(state.me.displayName || '读者')}</strong>
       </span>
-      <span class="account-offline-icon" data-offline-prefetch title="手动离线预取全文" aria-label="手动离线预取全文">${iconMarkup('database-arrow-down')}</span>
     `;
     $('#account-info').title = '打开个人后台';
     const unread = Number(state.me.notificationUnreadCount) || 0;
@@ -10049,7 +10058,13 @@ function setupContextResizer() {
 }
 
 /* ---------- Events ---------- */
-$('#brand-home').onclick = goHomeAll;
+$('#brand-home').onclick = () => {
+  if (state.me) {
+    openMyCommentsModal({ tab: 'profile' });
+    return;
+  }
+  goHomeAll();
+};
 $$('.view-btn[data-view]').forEach(b => b.onclick = () => selectView(b.dataset.view));
 const navMoreToggle = $('#nav-more-toggle');
 if (navMoreToggle) navMoreToggle.onclick = () => {
@@ -10612,6 +10627,9 @@ async function triggerOfflinePrefetch() {
     toast('离线预取触发失败：' + err.message, 5000);
   }
 }
+$('#offline-prefetch-toggle')?.addEventListener('click', () => {
+  triggerOfflinePrefetch();
+});
 $('#account-settings-open')?.addEventListener('click', (e) => {
   e.stopPropagation();
   toggleAccountMenu();
@@ -11086,6 +11104,11 @@ $('#theme-toggle').onclick = () => {
   const next = document.body.dataset.theme === 'dark' ? 'light' : 'dark';
   applyAppearance(document.body.dataset.palette, next);
   saveAppearance('fr_theme', next);
+  // 手动切换即解除当日自动夜间；0:00 后恢复自动逻辑
+  try {
+    if (next === 'light') window.localStorage.setItem('fr_auto_dark_off_until', autoDarkResetKey());
+    else window.localStorage.removeItem('fr_auto_dark_off_until');
+  } catch {}
 };
 
 window.addEventListener('error', (e) => {
@@ -11094,6 +11117,30 @@ window.addEventListener('error', (e) => {
     list.innerHTML = `<div class="list-empty">页面脚本出错：${escapeHtml(e.message)}<br/>请刷新重试</div>`;
   }
 });
+
+/* ---------- Auto dark mode: >=19:00 自动夜间；手动切回浅色则当日不再自动；0:00 恢复 ---------- */
+function autoDarkResetKey() {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+}
+function shanghaiHour(date = new Date()) {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai', hour: '2-digit', hour12: false,
+  }).formatToParts(date).map(p => [p.type, p.value]));
+  return Number(parts.hour) % 24;
+}
+function autoDarkOverrideActive() {
+  try { return window.localStorage.getItem('fr_auto_dark_off_until') === autoDarkResetKey(); } catch { return false; }
+}
+function applyAutoDark({ force = false } = {}) {
+  if (document.body.dataset.theme !== 'dark' && !autoDarkOverrideActive() && shanghaiHour() >= 19) {
+    applyAppearance(document.body.dataset.palette, 'dark');
+    saveAppearance('fr_theme', 'dark');
+  }
+}
+window.addEventListener('load', () => applyAutoDark());
+setInterval(applyAutoDark, 5 * 60 * 1000);
+
 
 document.addEventListener('click', (e) => {
   if (!e.target.closest('.account-strip')) setAccountMenuOpen(false);

@@ -44,11 +44,11 @@
     <aside id="sidebar">
       <div class="brand">
         <button id="brand-home" class="brand-home" type="button" title="返回全部" aria-label="返回全部">
-          <img class="brand-logo" src="/brand-logo.png" alt="" />
+          <span id="brand-avatar" class="brand-avatar hidden"></span>
+          <img id="brand-logo" class="brand-logo" src="/brand-logo.png" alt="" />
         </button>
         <button id="sidebar-toggle" class="icon-btn" title="收起左侧栏" aria-label="收起左侧栏"><span data-qm-icon="panel-left-close"></span></button>
         <button id="feed-drawer-close" class="icon-btn feed-drawer-close" type="button" title="收起订阅列表" aria-label="收起订阅列表" hidden><span data-qm-icon="x"></span></button>
-        <button id="theme-toggle" class="icon-btn" title="切换主题" aria-label="切换主题"><span data-qm-icon="sun-moon"></span></button>
       </div>
 
       <div class="views">
@@ -345,9 +345,9 @@
         <header class="workspace-page-head">
           <div>
             <h1>个人后台</h1>
-            <p>编辑公开主页、查看通知和管理你沉淀过的资产。</p>
           </div>
           <div class="my-assets-header-actions">
+            <button class="icon-btn" id="theme-toggle" title="切换主题" aria-label="切换主题"><span data-qm-icon="sun-moon"></span></button>
             <label class="palette-control" for="palette-select">
               <span class="palette-swatch" aria-hidden="true"></span>
               <span>配色</span>
@@ -360,6 +360,7 @@
                 <option value="rose">Rose 玫瑰</option>
               </select>
             </label>
+            <button class="icon-btn" id="offline-prefetch-toggle" title="手动离线预取全文" aria-label="手动离线预取全文"><span data-qm-icon="database-arrow-down"></span></button>
             <button class="icon-btn" id="my-comments-close" title="返回阅读器" aria-label="返回阅读器"><span data-qm-icon="arrow-left"></span></button>
           </div>
         </header>
