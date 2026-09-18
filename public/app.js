@@ -5643,13 +5643,42 @@ function renderSummary() {
   if (hint) hint.textContent = '';
 }
 
-function entryIsEnglishForSummary(entry = state.activeEntry) {
-  const sample = [entry?.title || '', entry?.summary || '', entry?.content || '']
+function entryLanguageSample(entry) {
+  // 语言判定样本：正文先剥 HTML 标签与 URL——终端输出、代码块、图片地址里的
+  // 英文字符会稀释中文占比，把中文技术文误判成英文（Fedora 升级日志案例）。
+  const plainContent = String(entry?.content || '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/https?:\/\/\S+/g, ' ');
+  return [entry?.title || '', entry?.summary || '', plainContent]
     .filter(Boolean)
     .join('\n')
     .slice(0, 4000);
+}
+
+function entryIsEnglishForSummary(entry = state.activeEntry) {
+  const sample = entryLanguageSample(entry);
   if (!sample.trim()) return false;
-  return readerLanguageProfile(sample) === 'latin';
+  if (readerLanguageProfile(sample) !== 'latin') return false;
+  // 单篇正文判英文时，再看同源近邻文章投票（按标题+摘要，轻量数据即可）：
+  // 同源多篇是中文 → 该源按中文源对待，此篇不自动生成摘要（双语/技术文兜底）。
+  // 邻居判定用 CJK 占比而非 readerLanguageProfile——纯标题只有几个汉字，
+  // 到不了该函数 cjk>=24 的绝对数门槛，短文本会被误判 latin。
+  const cjkRatio = text => {
+    const cjk = (String(text).match(/[\u3400-\u9fff\uf900-\ufaff]/g) || []).length;
+    const latin = (String(text).match(/[A-Za-z]/g) || []).length;
+    return cjk + latin > 0 ? cjk / (cjk + latin) : 0;
+  };
+  const neighbors = (state.entries || [])
+    .filter(item => item.sourceId === entry.sourceId && item.id !== entry.id)
+    .slice(0, 6);
+  if (neighbors.length >= 2) {
+    const chinese = neighbors.filter(item => {
+      const text = [item.title || '', item.summary || ''].filter(Boolean).join('\n');
+      return cjkRatio(text) >= 0.3;
+    }).length;
+    if (chinese >= 2) return false;
+  }
+  return true;
 }
 
 function maybeAutoGenerateSummary(entry) {
