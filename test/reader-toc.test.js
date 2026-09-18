@@ -67,6 +67,34 @@ test('single heading keeps the rail hidden and empty', () => {
   assert.equal(rail.classList.contains('hidden'), true);
 });
 
+// h1-only 文章（Substack/gwern 类源用 h1 做章节）：h1 纳入轨道，≥2 个即显示。
+test('h1-only articles build the rail from h1 section headings', () => {
+  const { context, rail, state } = harness({ headings: [
+    heading('H1', 'Giving your AI a computer', 40),
+    heading('H1', 'Giving an AI YOUR computer', 60),
+    heading('H1', 'Everything Else', 80),
+  ] });
+  context.renderReaderToc(context.$('#reader-content'));
+  assert.equal(state.readerTocAvailable, true);
+  assert.match(rail.innerHTML, /reader-toc-rail-h1/g);
+  assert.equal((rail.innerHTML.match(/reader-toc-rail-item/g) || []).length, 3);
+});
+
+// 首个 h1 与文章主标题相同（部分源正文回填标题）：跳过，不重复显示；
+// 但后续章节 h1 正常计入。
+test('a leading h1 duplicating the entry title is skipped, later h1 sections count', () => {
+  const { context, rail, state } = harness({ headings: [
+    heading('H1', 'The Article Title', 20),
+    heading('H1', 'First Section', 40),
+    heading('H1', 'Second Section', 60),
+  ], title: 'The Article Title' });
+  context.state.activeEntry = { title: 'The Article Title' };
+  context.renderReaderToc(context.$('#reader-content'));
+  assert.equal(state.readerTocAvailable, true);
+  assert.doesNotMatch(rail.innerHTML, /The Article Title/);
+  assert.equal((rail.innerHTML.match(/reader-toc-rail-item/g) || []).length, 2);
+});
+
 test('active section follows the last heading above the viewport threshold', () => {
   const headings = [heading('H2', 'One', 40), heading('H3', 'Two', 95), heading('H2', 'Three', 150)];
   headings.forEach((h, i) => { h.id = 'reader-section-' + (i + 1); });

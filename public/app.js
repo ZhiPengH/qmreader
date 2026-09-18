@@ -4990,17 +4990,31 @@ function positionReaderTocRail() {
   rail.style.right = `${Math.max(6, Math.round(window.innerWidth - rect.right + 14))}px`;
 }
 
+function readerTocHeadings(root) {
+  // h1 纳入轨道：Substack（oneusefulthing 等）与 gwern 类源用 h1 做章节标题，
+  // 只数 h2-h4 会让这类文章的轨道条整条消失（≥2 才显示）。
+  // 防重复：首个 h1 若与文章主标题相同（部分源正文回填标题），跳过。
+  return [...root.querySelectorAll('h1,h2,h3,h4')]
+    .map((el, index, all) => {
+      const text = el.textContent.replace(/\s+/g, ' ').trim();
+      if (!text) return null;
+      const tag = el.tagName.toLowerCase();
+      const isFirstH1 = tag === 'h1' && !all.slice(0, index).some(prev => prev.tagName === 'H1');
+      const entryTitle = (state.activeEntry?.titleZh || state.activeEntry?.title || '').replace(/\s+/g, ' ').trim();
+      if (isFirstH1 && entryTitle && text === entryTitle) return null;
+      return { el, text, level: tag };
+    })
+    .filter(Boolean);
+}
+
 function renderReaderToc(root = $('#reader-content')) {
   const rail = $('#reader-toc-rail');
   if (!rail || !root) return;
-  const headings = [...root.querySelectorAll('h2,h3,h4')]
-    .map((el, index) => {
-      const text = el.textContent.replace(/\s+/g, ' ').trim();
-      if (!text) return null;
-      el.id = `reader-section-${index + 1}`;
-      return { id: el.id, text, level: el.tagName.toLowerCase() };
+  const headings = readerTocHeadings(root)
+    .map((item, index) => {
+      item.el.id = `reader-section-${index + 1}`;
+      return { id: item.el.id, text: item.text, level: item.level };
     })
-    .filter(Boolean)
     .slice(0, 24);
   state.readerTocAvailable = headings.length >= 2;
   if (!state.readerTocAvailable) {
@@ -5023,7 +5037,7 @@ function updateReaderTocActive() {
   if (!rail || !pane || !content || rail.classList.contains('hidden')) return;
   const paneTop = pane.getBoundingClientRect().top;
   let activeId = '';
-  for (const el of content.querySelectorAll('h2,h3,h4')) {
+  for (const el of readerTocHeadings(content).map(item => item.el)) {
     if (el.getBoundingClientRect().top - paneTop <= 100) activeId = el.id;
     else break;
   }
@@ -5630,7 +5644,13 @@ function entryIsEnglishForSummary(entry = state.activeEntry) {
 function maybeAutoGenerateSummary(entry) {
   const block = $('#reader-summary');
   if (!entry || !block || block.classList.contains('hidden') || state.summaryGenerating) return;
-  if (!entryIsEnglishForSummary()) return;
+  if (!entryIsEnglishForSummary(entry)) {
+    // 中文（cjk/mixed）文章：摘要面板默认收起，不自动生成——details 的展开态
+    // 跨文章残留（上一篇英文自动展开后会带过来），这里显式归位。
+    // 用户主动点开时 toggle 监听会触发生成。
+    block.open = false;
+    return;
+  }
   block.open = true;
   renderSummary();
   if (!state.summary?.body) generateSummary();

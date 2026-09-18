@@ -2387,6 +2387,7 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   opacity: .38;
   transition: width .18s ease, background-color .18s ease, opacity .18s ease;
 }
+.reader-toc-rail-h1 .reader-toc-rail-mark { width: 22px; }
 .reader-toc-rail-h2 .reader-toc-rail-mark { width: 17.6px; }
 .reader-toc-rail-h3 .reader-toc-rail-mark { width: 12px; }
 .reader-toc-rail-h4 .reader-toc-rail-mark { width: 8px; }
