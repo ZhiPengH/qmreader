@@ -170,9 +170,10 @@
   .plaza-controls { row-gap: 11px; }
   .plaza-modes { flex-basis: 100%; gap: 27px; }
   .plaza-layouts { margin-left: auto; }
-  .plaza-card { padding: 18px; }
-  .plaza-card-title { font-size: 20px; line-height: 1.5; }
-  .plaza-card-summary { font-size: 14px; line-height: 1.8; }
+  .plaza-card { padding: 13px; }
+  .plaza-card-title { font-size: 16px; line-height: 1.45; }
+  .plaza-card-summary { font-size: 12.5px; line-height: 1.65; }
+  .plaza-card-image { height: 96px; margin-top: 11px; }
   .plaza-source, .plaza-card-bottom { font-size: 12px; }
   .plaza-actions .plaza-btn { min-height: 36px; width: 36px; padding: 8px; }
   .plaza-list .plaza-card { min-height: 165px; padding: 14px; }

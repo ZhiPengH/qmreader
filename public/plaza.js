@@ -279,7 +279,7 @@
       const feed = $('#plaza-feed'), list = plaza.snapshot().settings.view === 'list';
       feed.classList.toggle('plaza-list', list);
       const width = feed.clientWidth; if (!width) return;
-      const count = width >= 960 ? 3 : width >= 550 && !mobile() ? 2 : 1, gap = 16;
+      const count = width >= 960 ? 3 : 2, gap = 16;
       const nextWidth = (width - gap * (count - 1)) / count;
       if (!appendOnly || columns.length !== count || columnWidth !== nextWidth) { columns = Array(count).fill(0); columnWidth = nextWidth; appendOnly = false; }
       for (const card of cards.values()) {
