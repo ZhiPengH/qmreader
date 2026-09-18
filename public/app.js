@@ -10259,13 +10259,11 @@ const readerSummaryBlock = $('#reader-summary');
 if (readerSummaryBlock) {
   readerSummaryBlock.addEventListener('toggle', () => {
     updateSummaryVisibility();
-    // 语言闸：仅英文文章点开面板时自动生成；中文文章（cjk/mixed）不自动触发
-    // AI 摘要——点开只展示已有摘要或空态，生成需明确点「生成」类入口。
+    // 点开面板即自动生成（无既有摘要且不在生成/加载中）——中英文一致。
     if (readerSummaryBlock.open
       && !state.summary?.body
       && !state.summaryGenerating
-      && !state.summaryLoading
-      && entryIsEnglishForSummary()) {
+      && !state.summaryLoading) {
       generateSummary();
     }
   });
