@@ -463,6 +463,7 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   border-radius: var(--radius-sm);
 }
 #sidebar-toggle { flex: none; }
+#sidebar-toggle .app-icon { --icon-size: 17px; }
 
 .views { padding: 0 10px 10px; display: flex; flex-direction: column; gap: 2px; flex: none; }
 .view-btn {

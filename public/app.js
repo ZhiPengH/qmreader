@@ -612,7 +612,7 @@ const state = {
   rssSources: [],
   rssLoading: false,
   rssBusy: false,
-  rssEditingId: null,
+  rssEditId: null,
   rssReplaceAdvanced: false,
   sources: [],
   entries: [],
@@ -2299,6 +2299,7 @@ function openFeedMenu(id, trigger) {
   root.innerHTML = `<div class="feed-menu-main" role="menu" aria-label="${escapeHtml(source.name)}订阅操作">
     <button role="menuitem" data-menu-action="pin">${iconMarkup('pin')}<span>${source.pinned ? '取消置顶' : '置顶到最爱'}</span></button>
     <button role="menuitem" data-menu-action="move" aria-haspopup="menu" aria-expanded="false">${iconMarkup('folder-input')}<span>移动到分类</span>${iconMarkup('chevron-right')}</button>
+    <button role="menuitem" data-menu-action="edit">${iconMarkup('pencil')}<span>编辑</span></button>
     <button role="menuitem" data-menu-action="refresh">${iconMarkup('refresh-cw')}<span>手动刷新</span></button>
     <div class="feed-menu-separator" role="separator"></div>
     <button role="menuitem" class="feed-menu-delete" data-menu-action="delete">${iconMarkup('trash')}<span>删除订阅</span></button>
@@ -2326,6 +2327,7 @@ function openFeedMenu(id, trigger) {
     if (action === 'back') { showFeedCategories(false); return; }
     closeFeedMenu();
     if (action === 'pin') togglePinSource(id);
+    if (action === 'edit') openRssEditModal(id);
     if (action === 'refresh') manuallyRefreshSource(id);
     if (action === 'delete') deleteSourceFromSidebar(id);
   });
@@ -3414,15 +3416,19 @@ function renderPersonalIdentityState() {
   const loggedIn = Boolean(state.me);
   $('#identity-status').classList.toggle('hidden', loggedIn);
   $('#identity-status').textContent = state.identityStatus === 'loading' ? '正在加载个人数据…' : '个人数据不可用，请重新加载';
-  $('#account-info')?.classList.toggle('hidden', !loggedIn);
   $('#account-settings-open')?.classList.toggle('hidden', !loggedIn);
-  // 侧栏 logo 位：登录后显示个人头像，点击进入个人后台；未登录回落品牌 logo（返回全部）
+  // 侧栏 logo 位：登录后显示个人头像+姓名，点击进入个人后台；未登录回落品牌 logo（返回全部）
   const brandAvatar = $('#brand-avatar');
   const brandLogo = $('#brand-logo');
+  const brandName = $('#brand-name');
   if (brandAvatar && brandLogo) {
     brandAvatar.innerHTML = avatarHtml(state.me, 'brand-avatar-img');
     brandAvatar.classList.toggle('hidden', !loggedIn);
     brandLogo.classList.toggle('hidden', loggedIn);
+    if (brandName) {
+      brandName.textContent = loggedIn ? (state.me.displayName || '读者') : '';
+      brandName.classList.toggle('hidden', !loggedIn);
+    }
     $('#brand-home').title = loggedIn ? '打开个人后台' : '返回全部';
     $('#brand-home').setAttribute('aria-label', loggedIn ? '打开个人后台' : '返回全部');
   }
@@ -3430,13 +3436,6 @@ function renderPersonalIdentityState() {
     setAccountMenuOpen(false);
   }
   if (loggedIn) {
-    $('#account-info').innerHTML = `
-      ${avatarHtml(state.me, 'account-avatar')}
-      <span class="account-text">
-        <strong>${escapeHtml(state.me.displayName || '读者')}</strong>
-      </span>
-    `;
-    $('#account-info').title = '打开个人后台';
     const unread = Number(state.me.notificationUnreadCount) || 0;
     const badge = $('#notification-count');
     if (badge) {
@@ -6918,8 +6917,6 @@ function renderRssGroups() {
       </div>`;
     }).join('')
     + `<button id="rss-group-add" class="rss-group-chip rss-group-add rss-c3" type="button" title="添加分组">${iconMarkup('house-plus')}</button>`;
-  const datalist = $('#rss-category-options');
-  if (datalist) datalist.innerHTML = allRssGroups().map(name => `<option value="${escapeHtml(categoryLabel(name))}"></option>`).join('');
 }
 
 function addRssGroup() {
@@ -7068,45 +7065,6 @@ async function loadRssSources({ propagateError = false } = {}) {
   } finally { state.rssLoading = false; }
 }
 
-function resetRssEditor() {
-  state.rssEditingId = null;
-  state.rssReplaceAdvanced = false;
-  $('#rss-source-form').reset();
-  $('#rss-feeds').readOnly = false;
-  $('#rss-advanced-note').classList.add('hidden');
-  $('#rss-editor-title').textContent = '添加订阅源';
-  $('#rss-save').textContent = '添加订阅';
-  $('#rss-cancel').textContent = '清空';
-}
-
-function editRssSource(source) {
-  state.rssEditingId = source.id;
-  state.rssReplaceAdvanced = false;
-  $('#rss-use-standard').classList.remove('hidden');
-  $('#rss-advanced-description').textContent = '此源包含高级抓取配置，默认保留。改用标准 RSS 后，保存会替换原配置及备用抓取方式。';
-  $('#rss-name').value = source.name;
-  $('#rss-category').value = categoryLabel(source.category);
-  $('#rss-feeds').value = (source.feeds || []).map(feed => typeof feed === 'string' ? feed : JSON.stringify(feed)).join('\n');
-  $('#rss-feeds').readOnly = rssFeedsAreAdvanced(source);
-  $('#rss-advanced-note').classList.toggle('hidden', !rssFeedsAreAdvanced(source));
-  $('#rss-editor-title').textContent = '编辑订阅源';
-  $('#rss-save').textContent = '保存修改';
-  $('#rss-cancel').textContent = '取消编辑';
-  $('#rss-editor-details').open = true;
-  $('#rss-name').focus();
-}
-
-function useStandardRssFeeds() {
-  const source = state.rssSources.find(item => item.id === state.rssEditingId);
-  if (!source || state.rssBusy || !rssFeedsAreAdvanced(source)) return;
-  state.rssReplaceAdvanced = true;
-  $('#rss-feeds').readOnly = false;
-  $('#rss-feeds').value = (source.feeds || []).filter(feed => typeof feed === 'string' && /^https?:\/\//i.test(feed) && !/\{rsshub\}/i.test(feed)).join('\n');
-  $('#rss-use-standard').classList.add('hidden');
-  $('#rss-advanced-description').textContent = '保存后将使用下方 RSS 地址，替换原高级配置及备用抓取方式。取消编辑可保留原配置。';
-  $('#rss-feeds').focus();
-}
-
 async function refreshAfterRssMutation() {
   await loadRssSources({ propagateError: true });
   await loadSources();
@@ -7137,26 +7095,69 @@ async function mutateRssSource(operation, successMessage, onSuccess) {
   } finally { setRssBusy(false); }
 }
 
-async function submitRssSource(event) {
-  event.preventDefault();
-  const editing = state.rssSources.find(source => source.id === state.rssEditingId);
-  const payload = { name: $('#rss-name').value.trim(), category: normalizeCategoryInput($('#rss-category').value) };
-  if (!editing || !rssFeedsAreAdvanced(editing) || state.rssReplaceAdvanced) payload.feeds = $('#rss-feeds').value.split(/\r?\n/).map(value => value.trim()).filter(Boolean);
-  if (!payload.name || (payload.feeds && !payload.feeds.length)) { $('#rss-status').textContent = '请填写名称和 RSS 地址。'; return; }
-  const endpoint = '/api/me/sources' + (editing ? '/' + encodeURIComponent(editing.id) : '');
-  await mutateRssSource(() => api(endpoint, { method: editing ? 'PATCH' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }), editing ? '订阅源已保存' : '订阅源已添加', resetRssEditor);
-}
-
 async function handleRssAction(event) {
   const button = event.target.closest('[data-rss-action]');
   if (!button || state.rssBusy) return;
   const source = state.rssSources.find(item => item.id === button.dataset.rssId);
   if (!source) return;
   const action = button.dataset.rssAction;
-  if (action === 'edit') { editRssSource(source); return; }
+  if (action === 'edit') { openRssEditModal(source.id); return; }
   if (action === 'delete' && !confirm(`删除“${source.name}”？将停止抓取并从订阅列表隐藏，已有文章、收藏和阅读历史都会保留。之后可以在“已删除的订阅源”中恢复。`)) return;
   const payload = action === 'restore' ? { deleted: false, enabled: true } : { enabled: !source.enabled };
-  await mutateRssSource(() => api('/api/me/sources/' + encodeURIComponent(source.id), { method: action === 'delete' ? 'DELETE' : 'PATCH', headers: { 'Content-Type': 'application/json' }, ...(action === 'delete' ? {} : { body: JSON.stringify(payload) }) }), action === 'delete' ? '订阅源已删除，阅读数据已保留' : action === 'restore' ? '订阅源已恢复并启用' : '订阅状态已更新', () => { if (state.rssEditingId === source.id && action === 'delete') resetRssEditor(); });
+  await mutateRssSource(() => api('/api/me/sources/' + encodeURIComponent(source.id), { method: action === 'delete' ? 'DELETE' : 'PATCH', headers: { 'Content-Type': 'application/json' }, ...(action === 'delete' ? {} : { body: JSON.stringify(payload) }) }), action === 'delete' ? '订阅源已删除，阅读数据已保留' : action === 'restore' ? '订阅源已恢复并启用' : '订阅状态已更新', () => { });
+}
+
+
+/* ---------- 订阅源编辑对话框（me 页源卡与侧栏菜单共用） ---------- */
+function openRssEditModal(sourceId) {
+  const source = state.rssSources.find(item => item.id === sourceId)
+    || state.sources.find(item => item.id === sourceId);
+  if (!source || source.manual) return;
+  state.rssEditId = source.id;
+  $('#rss-edit-title').textContent = `编辑订阅源 · ${source.name}`;
+  $('#rss-edit-name').value = source.name || '';
+  $('#rss-edit-site').value = source.siteUrl || '';
+  $('#rss-edit-feeds').value = (source.feeds || []).map(feed => typeof feed === 'string' ? feed : JSON.stringify(feed)).join('\n');
+  $('#rss-edit-feeds').readOnly = rssFeedsAreAdvanced(source);
+  const select = $('#rss-edit-category');
+  const current = source.category || 'article';
+  select.innerHTML = allRssGroups().map(name =>
+    `<option value="${escapeHtml(name)}"${name === current ? ' selected' : ''}>${escapeHtml(categoryLabel(name))}</option>`).join('');
+  $('#rss-edit-status').textContent = rssFeedsAreAdvanced(source) ? '此源包含高级抓取配置，RSS 地址保持只读；名称、分类、站点仍可修改。' : '';
+  $('#rss-edit-modal').classList.remove('hidden');
+  $('#rss-edit-name').focus();
+}
+
+function closeRssEditModal() {
+  state.rssEditId = null;
+  $('#rss-edit-modal').classList.add('hidden');
+}
+
+async function submitRssEdit(event) {
+  event.preventDefault();
+  if (!state.rssEditId || state.rssBusy) return;
+  const editing = state.rssSources.find(item => item.id === state.rssEditId) || state.sources.find(item => item.id === state.rssEditId);
+  if (!editing) { closeRssEditModal(); return; }
+  const payload = {
+    name: $('#rss-edit-name').value.trim(),
+    category: normalizeCategoryInput($('#rss-edit-category').value),
+    siteUrl: $('#rss-edit-site').value.trim(),
+  };
+  if (!rssFeedsAreAdvanced(editing)) {
+    payload.feeds = $('#rss-edit-feeds').value.split(/\r?\n/).map(value => value.trim()).filter(Boolean);
+    if (!payload.feeds.length) { $('#rss-edit-status').textContent = '请至少填写一个 RSS 地址。'; return; }
+  }
+  if (!payload.name) { $('#rss-edit-status').textContent = '请填写名称。'; return; }
+  try {
+    setRssBusy(true);
+    const data = await api('/api/me/sources/' + encodeURIComponent(editing.id), { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    closeRssEditModal();
+    if (data?.source) Object.assign(editing, data.source);
+    await refreshAfterRssMutation();
+    toast('订阅源已保存');
+  } catch (err) {
+    $('#rss-edit-status').textContent = '保存失败：' + err.message;
+  } finally { setRssBusy(false); }
 }
 
 function renderRssImportResult(result) {
@@ -7167,15 +7168,16 @@ function renderRssImportResult(result) {
 async function submitRssImport(event) {
   event.preventDefault();
   if (state.rssBusy) return;
-  const format = $('#rss-import-format').value;
+  const urls = $('#rss-import-urls').value.trim();
+  const format = urls ? 'urls' : 'opml';
   let content;
   try {
     if (format === 'opml') {
       const file = $('#rss-import-file').files[0];
-      if (!file) throw new Error('请选择 OPML 文件');
+      if (!file) throw new Error('请粘贴 RSS 地址或选择 OPML 文件');
       if (file.size > 1024 * 1024) throw new Error('文件不能超过 1 MB');
       content = await file.text();
-    } else content = $('#rss-import-urls').value.trim();
+    } else content = urls;
     if (!content.trim()) throw new Error('请输入需要导入的内容');
     if (new TextEncoder().encode(content).length > 1024 * 1024) throw new Error('导入内容不能超过 1 MB');
     if (format === 'urls' && content.split(/\r?\n/).filter(line => line.trim()).length > 200) throw new Error('每次最多导入 200 个订阅');
@@ -10607,13 +10609,6 @@ const translationProfileSelect = $('#translation-profile-select');
 if (translationProfileSelect) translationProfileSelect.onchange = (e) => setAiProfileForPurpose('translation', e.target.value);
 const rewriteProfileSelect = $('#rewrite-profile-select');
 if (rewriteProfileSelect) rewriteProfileSelect.onchange = (e) => setAiProfileForPurpose('rewrite', e.target.value);
-$('#account-info').onclick = (e) => {
-  if (e.target.closest('[data-offline-prefetch]')) {
-    triggerOfflinePrefetch();
-    return;
-  }
-  openMyCommentsModal({ tab: 'profile' });
-};
 
 async function triggerOfflinePrefetch() {
   try {
@@ -10717,10 +10712,11 @@ $$('#my-dashboard-page [data-my-asset-sort]').forEach(btn => {
     renderMyAssets();
   };
 });
-$('#rss-source-form').onsubmit = submitRssSource;
 $('#rss-import-form').onsubmit = submitRssImport;
-$('#rss-cancel').onclick = resetRssEditor;
-$('#rss-use-standard').onclick = useStandardRssFeeds;
+$('#rss-edit-form').onsubmit = submitRssEdit;
+$('#rss-edit-close').onclick = closeRssEditModal;
+$('#rss-edit-cancel').onclick = closeRssEditModal;
+$('#rss-edit-modal').addEventListener('click', event => { if (event.target === $('#rss-edit-modal')) closeRssEditModal(); });
 $('#rss-recent').onclick = toggleRecentRssSources;
 $('#rss-deleted-purge').onclick = event => {
   event.preventDefault();
@@ -10867,11 +10863,6 @@ function closeSwipedFeedRows(except) {
     if (row !== except) setFeedSwipe(row, 0, false);
   });
 }
-$('#rss-import-format').onchange = () => {
-  const opml = $('#rss-import-format').value === 'opml';
-  $('#rss-file-label').classList.toggle('hidden', !opml);
-  $('#rss-urls-label').classList.toggle('hidden', opml);
-};
 function isFeedDrawerViewport() {
   return Boolean(window.matchMedia && window.matchMedia('(max-width: 860px)').matches && !$('#app').classList.contains('reading'));
 }
@@ -10910,7 +10901,7 @@ document.addEventListener('keydown', event => {
 });
 $('#sidebar').addEventListener('click', event => {
   if (!state.feedDrawerOpen) return;
-  if (event.target.closest('.feed-item, .view-btn, .group-label, #submit-link-open, #brand-home, #account-info')) setFeedDrawer(false);
+  if (event.target.closest('.feed-item, .view-btn, .group-label, #submit-link-open, #brand-home')) setFeedDrawer(false);
 });
 let feedDrawerTouch = null;
 $('#sidebar').addEventListener('touchstart', event => {
