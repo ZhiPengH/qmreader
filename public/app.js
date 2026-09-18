@@ -1250,8 +1250,10 @@ function fileToAvatarDataUrl(file) {
 }
 
 function renderInlineMarkdown(value) {
+  // Markdown-lite 内联渲染：图片统一 lazy（无 eager 语境——此前误引用未定义变量
+  // eager，正文含 ![图片] 语法即抛 ReferenceError，重写/摘要渲染整体失败）。
   return String(value || '')
-    .replace(/!\[([^\]]*)\]\((https?:\/\/[^)\s]+)\)/g, (_, alt, src) => `<img src="${src}" alt="${alt}" loading="${eager ? 'eager' : 'lazy'}" decoding="async" referrerpolicy="no-referrer" />`)
+    .replace(/!\[([^\]]*)\]\((https?:\/\/[^)\s]+)\)/g, (_, alt, src) => `<img src="${src}" alt="${alt}" loading="lazy" decoding="async" referrerpolicy="no-referrer" />`)
     .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, (_, label, href) => `<a href="${href}" target="_blank" rel="noopener">${label}</a>`)
     .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
     .replace(/`([^`]+)`/g, '<code>$1</code>');
@@ -5148,6 +5150,15 @@ function handleReaderTab(tab, { preserveFocus = false, replaceUrl = true } = {})
     state.readerAssetId = '';
   }
   setReaderTab(tab, { replaceUrl });
+  // 点「中文改写」即自动生成：无既有内容且不在生成/加载中时直接触发，
+  // 省掉再点一次「生成」。generateRewrite 自带防重入与登录校验。
+  if (tab === 'rewrite'
+    && state.activeEntry
+    && !state.rewrite?.body
+    && !state.rewriteGenerating
+    && !state.rewriteLoading) {
+    generateRewrite();
+  }
 }
 
 function maybeGenerateRewriteAfterLoad() {
