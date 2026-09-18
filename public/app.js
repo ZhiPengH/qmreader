@@ -5639,7 +5639,11 @@ function renderSummary() {
   empty.classList.remove('hidden');
   const emptyText = $('#summary-empty p');
   if (emptyText) emptyText.textContent = state.summaryError ? ('生成失败：' + state.summaryError) : '还没有生成中文摘要。';
-  if (state.summaryError && redo) redo.classList.remove('hidden');
+  // 空态给出显式生成入口：中文文章不再自动触发（toggle 语言闸），
+  // 但保留用户主动生成的路径——失败重试与首次生成都走这里。
+  if (redo) redo.classList.remove('hidden');
+  setButtonIconLabel(redo, 'sparkles', state.summaryError ? '重试生成' : '生成摘要');
+  hydrateLucideIcons(redo);
   if (hint) hint.textContent = '';
 }
 
@@ -10255,7 +10259,13 @@ const readerSummaryBlock = $('#reader-summary');
 if (readerSummaryBlock) {
   readerSummaryBlock.addEventListener('toggle', () => {
     updateSummaryVisibility();
-    if (readerSummaryBlock.open && !state.summary?.body && !state.summaryGenerating && !state.summaryLoading) {
+    // 语言闸：仅英文文章点开面板时自动生成；中文文章（cjk/mixed）不自动触发
+    // AI 摘要——点开只展示已有摘要或空态，生成需明确点「生成」类入口。
+    if (readerSummaryBlock.open
+      && !state.summary?.body
+      && !state.summaryGenerating
+      && !state.summaryLoading
+      && entryIsEnglishForSummary()) {
       generateSummary();
     }
   });
