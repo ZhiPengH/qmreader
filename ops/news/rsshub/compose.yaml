@@ -1,0 +1,24 @@
+services:
+  rsshub-x:
+    image: diygod/rsshub:latest
+    container_name: rsshub-x
+    restart: unless-stopped
+    networks:
+      - zonglan-news_default
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      CACHE_TYPE: memory
+      CACHE_EXPIRE: "900"
+      DEBUG_INFO: "false"
+    # Host resolver 100.64.0.1 intermittently fails resolving cdn.jsdelivr.net / x.com.
+    dns:
+      - 223.5.5.5
+      - 8.8.8.8
+
+# Joins the existing qmreader network so only the News container can reach it.
+# No ports are published to the host or the internet.
+networks:
+  zonglan-news_default:
+    external: true

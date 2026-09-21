@@ -9,6 +9,8 @@ const deepseek = require('./lib/deepseek');
 const { requestAiConfig } = require('./lib/request-ai-config');
 const store = require('./lib/store');
 const subscriptions = require('./lib/subscriptions');
+const routing = require('./lib/rsshub-routing');
+const twitterRefresh = require('./lib/twitter-refresh');
 const { rankPlazaEntries } = require('./lib/plaza');
 const { createPlazaTagger } = require('./lib/plaza-tags');
 // Automatic spending is opt-in pending a confirmed budget. Manual default: 100/day.
@@ -1956,29 +1958,41 @@ app.post('/api/me/rss-preview', requirePersonalIdentity, async (req, res) => {
   try {
     const raw = String((req.body && req.body.url) || '').trim();
     const canonical = subscriptions.feedCandidate(raw);
-    const candidates = subscriptions.expandRsshub(canonical);
+    const internal = routing.internalOrigin();
+    const candidates = routing.expandFeedCandidates(canonical, internal ? internal.origin : null);
     let lastError = null;
     for (const url of candidates) {
       try {
-        const feed = await fetcher.parseRssUrl(url);
+        const feed = await fetcher.parseRssUrlForPreview(url);
         const items = Array.isArray(feed.items) ? feed.items : [];
         if (!feed.title && !items.length) throw new Error('内容不是有效的 RSS 源');
+        // Private twitter channel: an empty-but-titled feed must not enter the
+        // success state (design §5); normal feeds keep the historical behaviour.
+        if (routing.isInternalRsshubTarget(url) && !items.length) throw new Error('该源没有可用条目');
         const latest = items[0];
         const feedLink = String(feed.link || '').trim();
-        const siteUrl = /^https?:\/\//i.test(feedLink) ? feedLink : new URL(url).origin;
+        const internalTarget = routing.isInternalRsshubTarget(url);
+        const siteUrl = /^https?:\/\//i.test(feedLink)
+          ? feedLink
+          : (internalTarget ? '' : new URL(url).origin);
         return res.json({
           url: canonical,
-          resolvedUrl: url,
+          resolvedUrl: internalTarget ? '' : url,
           title: String(feed.title || '').trim(),
           siteUrl,
           itemCount: items.length,
           latestTitle: latest ? String(latest.title || '').trim() : '',
         });
       } catch (error) {
-        lastError = `${url}: ${error.message || error}`;
+        lastError = `${internal ? '' : url}${internal ? '内部通道' : ': '}${error.message || error}`;
       }
     }
-    return res.status(422).json({ error: `无法解析该 RSS 地址${candidates.length > 1 ? `（已尝试 ${candidates.length} 个 RSSHub 实例）` : ''}：${lastError || '未知错误'}` });
+    const twitterInternal = routing.isTwitterFeed(canonical) && internal;
+    const detail = lastError ? String(lastError).replace(/^内部通道:?/, '') : '未知错误';
+    const summary = twitterInternal
+      ? `私有 Twitter 通道未返回有效内容：${detail}`
+      : `无法解析该 RSS 地址${candidates.length > 1 ? `（已尝试 ${candidates.length} 个 RSSHub 实例）` : ''}：${lastError || '未知错误'}`;
+    return res.status(422).json({ error: summary });
   } catch (error) {
     sendError(res, error, 'RSS 预览失败');
   }
@@ -2727,6 +2741,47 @@ function scheduleFreshnessRefresh() {
   }, delay);
 }
 
+// ---- Private twitter channel scheduling ----
+const TWITTER_REFRESH_INTERVAL_MS = parseInt(process.env.TWITTER_REFRESH_INTERVAL_MS || `${twitterRefresh.DEFAULT_INTERVAL_MS}`, 10);
+const TWITTER_SWEEP_INTERVAL_MS = parseInt(process.env.TWITTER_SWEEP_INTERVAL_MS || `${twitterRefresh.DEFAULT_SWEEP_INTERVAL_MS}`, 10);
+const TWITTER_SWEEP_STARTUP_DELAY_MS = parseInt(process.env.TWITTER_SWEEP_STARTUP_DELAY_MS || `${2 * MINUTE_MS}`, 10);
+const TWITTER_SWEEP_BATCH_SIZE = parseInt(process.env.TWITTER_SWEEP_BATCH_SIZE || `${twitterRefresh.DEFAULT_SWEEP_BATCH_SIZE}`, 10);
+const TWITTER_SWEEP_ENABLED = process.env.TWITTER_SWEEP_INTERVAL_MS !== '0' && routing.internalOrigin() !== null;
+
+function twitterSourceMetas() {
+  return fetcher.getSourcesMeta({ includeDeleted: true })
+    .filter(meta => {
+      if (meta.manual || meta.deleted || !meta.enabled) return false;
+      const source = fetcher.getSourceById(meta.id);
+      return Boolean(source && (source.feeds || []).some(feed => routing.isTwitterFeed(feed)));
+    })
+    .map(meta => ({
+      id: meta.id,
+      twitter: true,
+      fetchedAt: Number(meta.fetchedAt) || 0,
+      nextRetryAt: Number(meta.nextRetryAt) || 0,
+    }));
+}
+
+const twitterSweeper = twitterRefresh.createTwitterSweeper({
+  getSources: twitterSourceMetas,
+  canStart: () => !refreshWorker,
+  startJob: ids => startBackgroundJob({ kind: 'refresh', sourceIds: ids, reason: 'twitter-sweep' }),
+  intervalMs: TWITTER_REFRESH_INTERVAL_MS,
+  sweepIntervalMs: TWITTER_SWEEP_INTERVAL_MS,
+  batchSize: TWITTER_SWEEP_BATCH_SIZE,
+  startupDelayMs: TWITTER_SWEEP_STARTUP_DELAY_MS,
+});
+
+function scheduleTwitterRefresh() {
+  if (!TWITTER_SWEEP_ENABLED) {
+    console.log('Twitter sweep disabled (no internal RSSHub origin or explicitly turned off)');
+    return;
+  }
+  const result = twitterSweeper.schedule();
+  if (result && result.enabled) console.log(`Twitter sweep scheduled: interval=${TWITTER_REFRESH_INTERVAL_MS}ms sweep=${TWITTER_SWEEP_INTERVAL_MS}ms batch=${TWITTER_SWEEP_BATCH_SIZE}`);
+}
+
 app.get('/api/sources', (req, res) => {
   res.json({
     sources: fetcher.getSourcesMeta(),
@@ -2817,11 +2872,14 @@ async function enrichImportedSources(items) {
     while (cursor < items.length) {
       const item = items[cursor++];
       try {
-        const candidates = subscriptions.expandRsshub(subscriptions.feedCandidate(item.url));
+        const candidates = routing.expandFeedCandidates(
+          subscriptions.feedCandidate(item.url),
+          routing.internalOrigin()?.origin,
+        );
         let feed = null;
         for (const url of candidates) {
           try {
-            const parsed = await fetcher.parseRssUrl(url);
+            const parsed = await fetcher.parseRssUrlForPreview(url);
             if (parsed && (parsed.title || parsed.link)) { feed = parsed; break; }
           } catch { /* try next instance */ }
         }
@@ -3743,4 +3801,5 @@ const httpServer = app.listen(PORT, HOST, () => {
   scheduleDailyRefresh();
   offlinePrefetch.scheduleOfflinePrefetch();
   scheduleFreshnessRefresh();
+  scheduleTwitterRefresh();
 });
