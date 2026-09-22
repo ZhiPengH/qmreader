@@ -86,8 +86,6 @@
           <button class="asset-stat asset-stat-rewrite" type="button" data-asset-filter="rewrite">
             <span>重写</span><strong id="asset-stat-rewrite">0</strong>
           </button>
-          <button class="asset-stat asset-stat-annotations" type="button" data-asset-filter="annotations">
-            <span>划线</span><strong id="asset-stat-annotations">0</strong>
           </button>
           <button class="asset-stat asset-stat-comments" type="button" data-asset-filter="comments">
             <span>点评</span><strong id="asset-stat-comments">0</strong>
@@ -162,9 +160,7 @@
             <span class="reader-signal-icon" data-qm-icon="message-square-text"></span>
             <span id="reader-rail-comment-count" class="reader-signal-count">0</span>
           </button>
-          <button id="reader-rail-annotation" class="reader-signal-btn" type="button" title="查看划线点评" aria-label="查看划线点评">
             <span class="reader-signal-icon" data-qm-icon="highlighter"></span>
-            <span id="reader-rail-annotation-count" class="reader-signal-count">0</span>
           </button>
           <button id="reader-rail-rewrite" class="reader-signal-btn" type="button" title="中文改写" aria-label="中文改写">
             <span class="reader-signal-icon" data-qm-icon="sparkles"></span>
@@ -255,11 +251,10 @@
             </div>
           </div>
         </details>
-        <section id="reader-original-panel" class="reader-tab-panel annotation-surface-panel" data-annotation-surface="original">
+        <section id="reader-original-panel" class="reader-tab-panel">
           <div id="reader-content" class="reader-content"></div>
-          <aside id="annotation-margin-original" class="annotation-margin" aria-label="原文划线讨论"></aside>
         </section>
-        <section id="reader-rewrite-panel" class="reader-tab-panel annotation-surface-panel hidden" data-annotation-surface="rewrite">
+        <section id="reader-rewrite-panel" class="reader-tab-panel hidden">
           <div class="reader-section-head">
             <span id="rewrite-section-label">中文改写</span>
             <div class="reader-section-actions">
@@ -273,9 +268,8 @@
           <div id="rewrite-empty" class="asset-empty hidden">
             <p>这篇文章还没有中文改写。</p>
           </div>
-          <aside id="annotation-margin-rewrite" class="annotation-margin" aria-label="中文改写划线讨论"></aside>
         </section>
-        <section id="reader-translation" class="reader-translation reader-tab-panel annotation-surface-panel hidden" data-annotation-surface="translation">
+        <section id="reader-translation" class="reader-translation reader-tab-panel hidden">
           <div class="reader-section-head">
             <span>中文翻译</span>
             <div class="reader-section-actions">
@@ -291,26 +285,8 @@
           <div id="translation-empty" class="asset-empty hidden">
             <p>这篇文章还没有中文翻译。</p>
           </div>
-          <aside id="annotation-margin-translation" class="annotation-margin" aria-label="中文翻译划线讨论"></aside>
         </section>
-        <section id="reader-annotations" class="reader-annotations">
-          <div class="reader-section-head">
-            <span>划线点评</span>
-            <div class="annotation-head-tools">
-              <span id="annotations-count"></span>
-              <select id="annotation-surface-filter" class="annotation-surface-filter" aria-label="筛选划线点评">
-                <option value="all">全部</option>
-                <option value="original">原文</option>
-                <option value="rewrite">中文改写</option>
-                <option value="translation">中文翻译</option>
-              </select>
-              <button id="annotation-discussed-toggle" class="ghost-btn" type="button" aria-pressed="false">只看讨论段落</button>
-            </div>
-          </div>
-          <div id="annotation-nav" class="annotation-nav"></div>
-          <div id="annotations-list" class="annotations-list"></div>
-        </section>
-        <section id="reader-comments" class="reader-comments">
+        <section id="reader-comments"        <section id="reader-comments" class="reader-comments">
           <div class="reader-section-head">
             <span>人工点评</span>
             <div class="comment-head-tools">
@@ -337,13 +313,11 @@
             <button id="comment-send" class="ghost-btn" type="submit">发布</button>
           </form>
         </section>
-        <div id="annotation-popover" class="annotation-popover hidden" role="dialog" aria-label="划线点评">
-          <div class="annotation-popover-quote" id="annotation-popover-quote"></div>
-          <textarea id="annotation-popover-input" rows="3" placeholder="补充点评，可留空只划线…"></textarea>
-          <div class="annotation-popover-actions">
-            <button id="annotation-popover-copy" class="ghost-btn annotation-popover-copy" type="button">复制</button>
-            <button id="annotation-popover-send-ai" class="ghost-btn" type="button">发给AI</button>
-            <button id="annotation-popover-submit" class="ghost-btn primary" type="button">划线/点评</button>
+        <div id="selection-translate-popover" class="annotation-popover selection-translate-popover hidden" role="dialog" aria-label="选区翻译">
+          <div class="selection-translate-result" id="selection-translate-result">翻译中…</div>
+          <div class="annotation-popover-actions hidden" id="selection-translate-actions">
+            <button id="selection-translate-retry" class="ghost-btn" type="button">重新翻译</button>
+            <button id="selection-translate-copy" class="ghost-btn primary" type="button">复制译文</button>
           </div>
         </div>
       </article>
@@ -447,7 +421,6 @@
           <div class="my-asset-tabs" role="tablist" aria-label="我的资产类型">
             <button class="my-asset-tab active" type="button" data-my-asset-tab="translation">中译 <span id="my-translation-count">0</span></button>
             <button class="my-asset-tab" type="button" data-my-asset-tab="rewrite">重写 <span id="my-rewrite-count">0</span></button>
-            <button class="my-asset-tab" type="button" data-my-asset-tab="annotations">划线 <span id="my-annotations-count">0</span></button>
             <button class="my-asset-tab" type="button" data-my-asset-tab="comments">点评 <span id="my-comments-count">0</span></button>
             <button class="my-asset-tab" type="button" data-my-asset-tab="chat">对话 <span id="my-chat-count">0</span></button>
           </div>
@@ -475,7 +448,6 @@
         <div class="my-asset-tabs" role="tablist" aria-label="贡献主页资产类型">
           <button class="my-asset-tab active" type="button" data-contributor-tab="translation">中译 <span id="contributor-translation-count">0</span></button>
           <button class="my-asset-tab" type="button" data-contributor-tab="rewrite">重写 <span id="contributor-rewrite-count">0</span></button>
-          <button class="my-asset-tab" type="button" data-contributor-tab="annotations">划线 <span id="contributor-annotations-count">0</span></button>
           <button class="my-asset-tab" type="button" data-contributor-tab="comments">点评 <span id="contributor-comments-count">0</span></button>
           <button class="my-asset-tab" type="button" data-contributor-tab="chat">对话 <span id="contributor-chat-count">0</span></button>
           <button class="my-asset-tab" type="button" data-contributor-tab="likes">点赞 <span id="contributor-likes-count">0</span></button>
@@ -540,9 +512,6 @@
         <button id="context-tab-agent" class="context-tab active" type="button" data-context-panel="agent" aria-pressed="true">
           <span>AI 伴读</span>
         </button>
-        <button id="context-tab-annotations" class="context-tab" type="button" data-context-panel="annotations" aria-pressed="false">
-          <span>划线评论</span>
-          <strong id="context-annotation-count">0</strong>
         </button>
         <button id="context-close" class="icon-btn context-close" title="收起右侧栏" aria-label="收起右侧栏"><span data-qm-icon="panel-right-close"></span></button>
       </div>
@@ -569,16 +538,6 @@
             </div>
           </div>
         </form>
-      </section>
-      <section id="annotation-side-panel" class="context-panel annotation-side-panel hidden">
-        <header class="annotation-side-head">
-          <div>
-            <div class="annotation-side-kicker">划线评论</div>
-            <div id="annotation-side-title" class="annotation-side-title">未选择文章</div>
-          </div>
-          <button id="annotation-side-focus" class="icon-btn" type="button" title="跳到正文划线区" aria-label="跳到正文划线区"><span data-qm-icon="corner-down-left"></span></button>
-        </header>
-        <div id="side-annotations-list" class="side-annotations-list"></div>
       </section>
     </aside>
   </div>

@@ -31,6 +31,14 @@ test('new HTML uses content hashes instead of legacy immutable URLs; only matchi
       assert.equal(response.status, 200);
       assert.equal(response.headers.get('cache-control'), 'no-store');
       const html = await response.text();
+      // 划线点评功能已全量下线：HTML 不得再含划线入口与容器（选区翻译弹窗除外）
+      for (const gone of ['annotation-popover-input', 'annotation-popover-submit', 'annotation-popover-send-ai',
+        'reader-annotations', 'annotations-list', 'annotation-side-panel', 'side-annotations-list',
+        'context-tab-annotations', 'reader-rail-annotation', 'annotation-margin', 'my-annotations-count',
+        'contributor-annotations-count', 'asset-stat-annotations']) {
+        assert.ok(!html.includes(gone), `index.html should not contain ${gone}`);
+      }
+      assert.ok(html.includes('selection-translate-popover'));
       for (const name of ['app.js', 'styles.css']) {
         const digest = createHash('sha256').update(fs.readFileSync(path.join(root, 'public', name))).digest('hex');
         assert.ok(html.includes(`/${name}?v=${digest}`));

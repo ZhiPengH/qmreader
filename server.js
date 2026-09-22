@@ -2973,11 +2973,6 @@ app.get('/api/me/comments', requirePersonalIdentity, (req, res) => {
   res.json({ comments: store.getUserComments(req.user.id, { limit }) });
 });
 
-app.get('/api/me/annotations', requirePersonalIdentity, (req, res) => {
-  const limit = Math.max(1, Math.min(200, Number.parseInt(req.query.limit, 10) || 100));
-  res.json({ annotations: store.getUserAnnotations(req.user.id, { limit }) });
-});
-
 app.get('/api/me/translations', requirePersonalIdentity, (req, res) => {
   const limit = Math.max(1, Math.min(200, Number.parseInt(req.query.limit, 10) || 100));
   res.json({ translations: store.getUserTranslations(req.user.id, { limit }) });
@@ -3549,100 +3544,6 @@ app.delete('/api/entry/:id/comments/:commentId', requirePersonalIdentity, (req, 
   }
 });
 
-app.get('/api/entry/:id/annotations', (req, res) => {
-  const entry = fetcher.getEntryById(req.params.id);
-  if (!entry) return res.status(404).json({ error: 'entry not found' });
-  res.json({ annotations: store.getAnnotations(entry.id, req.user) });
-});
-
-app.post('/api/entry/:id/annotations', requirePersonalIdentity, (req, res) => {
-  const entry = fetcher.getEntryById(req.params.id);
-  if (!entry) return res.status(404).json({ error: 'entry not found' });
-  try {
-    const quote = String((req.body && req.body.quote) || '').trim();
-    if (!quote) return res.status(400).json({ error: 'annotation quote is required' });
-    const annotation = store.addAnnotation(entry.id, {
-      userId: req.user.id,
-      author: requestAuthor(req),
-      surface: req.body && req.body.surface,
-      assetId: req.body && req.body.assetId,
-      quote,
-      prefix: req.body && req.body.prefix,
-      suffix: req.body && req.body.suffix,
-      body: req.body && req.body.body,
-      contentHash: req.body && req.body.contentHash,
-    });
-    res.json({ annotation, annotations: store.getAnnotations(entry.id, req.user) });
-  } catch (e) {
-    sendError(res, e, 'annotation failed');
-  }
-});
-
-app.post('/api/entry/:id/annotations/:annotationId/replies', requirePersonalIdentity, (req, res) => {
-  const entry = fetcher.getEntryById(req.params.id);
-  if (!entry) return res.status(404).json({ error: 'entry not found' });
-  try {
-    const body = String((req.body && req.body.body) || '').trim();
-    if (!body) return res.status(400).json({ error: 'reply body is required' });
-    const annotation = store.addAnnotationReply(entry.id, req.params.annotationId, {
-      userId: req.user.id,
-      author: requestAuthor(req),
-      body,
-    });
-    if (!annotation) return res.status(404).json({ error: 'annotation not found' });
-    notifyTarget(store.getAnnotationNotificationTarget(entry.id, req.params.annotationId, '回复了'), req.user, {
-      type: 'annotation_reply',
-      objectType: 'annotation',
-      entryId: entry.id,
-      fallbackMessage: '有人回复了你的划线点评',
-    });
-    res.json({ annotation, annotations: store.getAnnotations(entry.id, req.user) });
-  } catch (e) {
-    sendError(res, e, 'annotation reply failed');
-  }
-});
-
-app.post('/api/entry/:id/annotations/:annotationId/helpful', requirePersonalIdentity, (req, res) => {
-  const entry = fetcher.getEntryById(req.params.id);
-  if (!entry) return res.status(404).json({ error: 'entry not found' });
-  try {
-    const helpful = req.body && typeof req.body.helpful === 'boolean'
-      ? req.body.helpful
-      : true;
-    const reaction = store.setAnnotationHelpful(entry.id, req.params.annotationId, req.user.id, helpful);
-    if (!reaction) return res.status(404).json({ error: 'annotation not found' });
-    if (helpful) {
-      notifyTarget(store.getAnnotationNotificationTarget(entry.id, req.params.annotationId, '觉得'), req.user, {
-        type: 'annotation_helpful',
-        objectType: 'annotation',
-        entryId: entry.id,
-        fallbackMessage: '有人觉得你的划线点评有用',
-      });
-    }
-    res.json({
-      reaction: {
-        helpfulCount: Number(reaction.helpful_count) || 0,
-        helpfulByMe: Boolean(reaction.helpful_by_me),
-      },
-      annotations: store.getAnnotations(entry.id, req.user),
-    });
-  } catch (e) {
-    sendError(res, e, 'annotation feedback failed');
-  }
-});
-
-app.delete('/api/entry/:id/annotations/:annotationId', requirePersonalIdentity, (req, res) => {
-  const entry = fetcher.getEntryById(req.params.id);
-  if (!entry) return res.status(404).json({ error: 'entry not found' });
-  try {
-    const deleted = store.deleteAnnotation(entry.id, req.params.annotationId, req.user);
-    if (!deleted) return res.status(404).json({ error: 'annotation not found' });
-    res.json({ ok: true, annotations: store.getAnnotations(entry.id, req.user) });
-  } catch (e) {
-    sendError(res, e, 'delete annotation failed');
-  }
-});
-
 app.post('/api/entry/:id/chat', requirePersonalIdentity, async (req, res) => {
   const entry = fetcher.getEntryById(req.params.id);
   if (!entry) return res.status(404).json({ error: 'entry not found' });
@@ -3734,6 +3635,22 @@ app.delete('/api/entry/:id/chat/:messageId', requirePersonalIdentity, (req, res)
     res.json({ ok: true, messages: store.getChatMessages(entry.id, req.user) });
   } catch (e) {
     sendError(res, e, 'delete chat message failed');
+  }
+});
+
+app.post('/api/translate-selection', requirePersonalIdentity, async (req, res) => {
+  const text = String((req.body && req.body.text) || '').trim();
+  if (!text) return res.status(400).json({ error: 'text is required' });
+  if (text.length > 4000) return res.status(400).json({ error: 'text too long' });
+  try {
+    const result = await deepseek.translateSelection(text, requestAiConfig(req));
+    res.json(result);
+  } catch (e) {
+    if (e && (e.statusCode === 422 || e.statusCode === 400)) {
+      return res.status(e.statusCode).json({ error: e.message || 'selection not translatable' });
+    }
+    console.warn('selection translation failed:', e.message || e);
+    sendError(res, e, 'selection translation failed');
   }
 });
 

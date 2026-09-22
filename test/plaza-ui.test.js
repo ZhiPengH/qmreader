@@ -528,7 +528,7 @@ for (const [name, end, field, loading] of [
   ['loadTranslation', 'function rewriteMetaText(', 'translation', 'translationLoading'],
   ['loadRewrite', 'async function generateTranslation(', 'rewrite', 'rewriteLoading'],
   ['loadSummary', 'async function generateSummary(', 'summary', 'summaryLoading'],
-  ['loadAnnotations', 'async function submitAnnotationDraft(', 'annotations'],
+
   ['loadComments', 'async function submitComment(', 'comments'],
   ['loadAgentMessages', 'async function sendAgentMessage(', 'agentMessages'],
 ]) {
@@ -536,7 +536,7 @@ for (const [name, end, field, loading] of [
     for (const fail of [false, true]) {
       const pending = deferred(), rendered = [], expected = { fresh: true };
       const c = { state: { activeEntry: entry('a'), readerRequestToken: 1 }, api: () => pending.promise,
-        updateEntryAssets() {}, entryAssetHelpfulPatch() {}, annotationAssetPatch() {}, renderList() {}, maybeAutoGenerateSummary() {}, maybeGenerateRewriteAfterLoad() {}, generateTranslation() {}, generateRewrite() {} };
+        updateEntryAssets() {}, entryAssetHelpfulPatch() {}, renderList() {}, maybeAutoGenerateSummary() {}, maybeGenerateRewriteAfterLoad() {}, generateTranslation() {}, generateRewrite() {} };
       for (const fn of ['renderTranslation', 'renderRewrite', 'renderSummary', 'renderAnnotations', 'renderComments', 'renderAgent']) c[fn] = () => rendered.push(fn);
       vm.createContext(c); vm.runInContext(appSlice('async function ' + name + '(', end), c);
       const work = c[name](entry('a')); rendered.length = 0;
