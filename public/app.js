@@ -7980,7 +7980,8 @@ async function selectSource(id) {
   state.readerAssetId = '';
   if (nextSource) hintSourceRefresh(nextSource, 'source-select');
   await reload();
-  if (nextSource && state.filterSource === nextSource) {
+  if (nextSource && state.filterSource === nextSource && !isCompactViewport()) {
+    // 紧凑视口（手机抽屉侧栏）点订阅应展示文章列表，不直接进阅读态。
     const newest = visibleEntries()[0];
     if (newest) await openEntry(newest);
   }
