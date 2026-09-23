@@ -201,6 +201,108 @@ test('preview and subscribe use the internal channel without leaking it', async 
   }
 });
 
+test('public feed preview failures are not mislabeled as internal channel', async () => {
+  // Regression for the 36kr report: with the internal RSSHub configured, a
+  // public URL that fails must not be labeled 内部通道 in the error message.
+  const stub = http.createServer((req, res) => { res.writeHead(404); res.end(); });
+  await new Promise(resolve => stub.listen(0, '127.0.0.1', resolve));
+  const stubBase = 'http://127.0.0.1:' + stub.address().port;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'news-preview-label-'));
+  const child = spawn(process.execPath, ['server.js'], {
+    cwd: path.join(__dirname, '..'),
+    env: {
+      ...process.env,
+      RSSHUB_INTERNAL_ORIGIN: stubBase,
+      QMREADER_DATA_DIR: dir,
+      QMREADER_DB_FILE: path.join(dir, 'qmreader.sqlite'),
+      HOST: '127.0.0.1', PORT: '0',
+      STARTUP_REFRESH_DELAY_MS: '-1', FRESHNESS_SWEEP_INTERVAL_MS: '-1', TWITTER_SWEEP_INTERVAL_MS: '-1',
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  try {
+    const port = await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('server startup timeout')), 10000);
+      child.stdout.on('data', data => {
+        const match = String(data).match(/listening on http:\/\/127\.0\.0\.1:(\d+)/);
+        if (match) { clearTimeout(timer); resolve(match[1]); }
+      });
+      child.once('exit', code => { clearTimeout(timer); reject(new Error(`server exited ${code}`)); });
+    });
+    const base = `http://127.0.0.1:${port}`;
+    const headers = { 'Content-Type': 'application/json', Origin: base, 'Sec-Fetch-Site': 'same-origin' };
+    // 127.0.0.1:1 refuses connections -> a plain public-URL failure.
+    const response = await fetch(base + '/api/me/rss-preview', {
+      method: 'POST', headers, body: JSON.stringify({ url: 'http://127.0.0.1:1/feed' }),
+    });
+    const body = await response.json();
+    assert.equal(response.status, 422);
+    assert.ok(!String(body.error).includes('内部通道'), `error mislabeled: ${body.error}`);
+    assert.match(String(body.error), /127\.0\.0\.1:1|无法解析/);
+  } finally {
+    if (child.exitCode === null) { const stopped = once(child, 'exit'); child.kill(); await stopped; }
+    fs.rmSync(dir, { recursive: true, force: true });
+    stub.close();
+  }
+});
+
+test('36kr newsflashes preview goes through the internal channel end to end', async () => {
+  const rss = '<?xml version="1.0" encoding="UTF-8"?>'
+    + '<rss version="2.0"><channel><title>36氪 - 快讯</title><link>https://www.36kr.com/newsflashes</link>'
+    + '<item><title>小米18 Pro系列发布</title><link>https://www.36kr.com/p/123</link>'
+    + '<pubDate>Wed, 23 Sep 2026 12:21:05 GMT</pubDate><description>快讯内容</description></item>'
+    + '</channel></rss>';
+  const stub = http.createServer((req, res) => {
+    if (req.url === '/36kr/newsflashes') { res.setHeader('content-type', 'application/xml'); res.end(rss); return; }
+    res.writeHead(404); res.end();
+  });
+  await new Promise(resolve => stub.listen(0, '127.0.0.1', resolve));
+  const stubBase = 'http://127.0.0.1:' + stub.address().port;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'news-36kr-e2e-'));
+  const child = spawn(process.execPath, ['server.js'], {
+    cwd: path.join(__dirname, '..'),
+    env: {
+      ...process.env,
+      RSSHUB_INTERNAL_ORIGIN: stubBase,
+      QMREADER_DATA_DIR: dir,
+      QMREADER_DB_FILE: path.join(dir, 'qmreader.sqlite'),
+      HOST: '127.0.0.1', PORT: '0',
+      STARTUP_REFRESH_DELAY_MS: '-1', FRESHNESS_SWEEP_INTERVAL_MS: '-1', TWITTER_SWEEP_INTERVAL_MS: '-1',
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  try {
+    const port = await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('server startup timeout')), 10000);
+      child.stdout.on('data', data => {
+        const match = String(data).match(/listening on http:\/\/127\.0\.0\.1:(\d+)/);
+        if (match) { clearTimeout(timer); resolve(match[1]); }
+      });
+      child.once('exit', code => { clearTimeout(timer); reject(new Error(`server exited ${code}`)); });
+    });
+    const base = `http://127.0.0.1:${port}`;
+    const headers = { 'Content-Type': 'application/json', Origin: base, 'Sec-Fetch-Site': 'same-origin' };
+    const preview = await (await fetch(base + '/api/me/rss-preview', {
+      method: 'POST', headers, body: JSON.stringify({ url: 'https://rsshub.app/36kr/newsflashes' }),
+    })).json();
+    assert.equal(preview.url, '{rsshub}/36kr/newsflashes');
+    assert.equal(preview.title, '36氪 - 快讯');
+    assert.equal(preview.itemCount, 1);
+    assert.equal(preview.siteUrl, 'https://www.36kr.com/newsflashes');
+    assert.ok(!JSON.stringify(preview).includes(stubBase), 'internal origin must not leak');
+
+    const created = await (await fetch(base + '/api/me/sources', {
+      method: 'POST', headers, body: JSON.stringify({ name: '36氪快讯', category: 'news', feeds: ['https://rsshub.app/36kr/newsflashes'] }),
+    })).json();
+    assert.equal(created.source.feeds[0], '{rsshub}/36kr/newsflashes');
+    assert.ok(!JSON.stringify(created).includes(stubBase));
+  } finally {
+    if (child.exitCode === null) { const stopped = once(child, 'exit'); child.kill(); await stopped; }
+    fs.rmSync(dir, { recursive: true, force: true });
+    stub.close();
+  }
+});
+
 test('fetchInternalText retries once on transient upstream failures and then gives up', async () => {
   const body = '<?xml version="1.0"?><rss version="2.0"><channel><title>t</title></channel></rss>';
   const hits = [];

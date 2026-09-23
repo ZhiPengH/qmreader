@@ -221,6 +221,18 @@ function normalizeFaviconTarget(value) {
   }
 }
 
+function normalizeTwitterAvatarUrl(value) {
+  try {
+    const parsed = new URL(String(value || '').trim());
+    if (parsed.protocol !== 'https:' || parsed.hostname !== 'pbs.twimg.com'
+        || parsed.username || parsed.password || !parsed.pathname.startsWith('/profile_images/')) return null;
+    parsed.hash = '';
+    return parsed.href;
+  } catch {
+    return null;
+  }
+}
+
 function fallbackFaviconPng() {
   return Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64');
 }
@@ -308,6 +320,31 @@ async function loadFavicon(target, size) {
     if (result) return result;
   }
   return fallback;
+}
+
+async function loadTwitterAvatar(source) {
+  const target = normalizeTwitterAvatarUrl(source && source.avatarUrl);
+  if (!target || !Array.isArray(source && source.feeds) || !source.feeds.some(item => routing.isTwitterFeed(item))) return null;
+  const cacheKey = `twitter-avatar:${target}`;
+  const cached = faviconCache.get(cacheKey);
+  if (cached) {
+    cacheFavicon(cacheKey, cached);
+    return cached;
+  }
+  let task = faviconInFlight.get(cacheKey);
+  if (!task) {
+    if (faviconInFlight.size >= FAVICON_MAX_INFLIGHT) return null;
+    task = fetchFaviconCandidate(target, Date.now() + FAVICON_TOTAL_TIMEOUT_MS)
+      .then(value => {
+        if (!value) return null;
+        const stored = { ...value, at: Date.now() };
+        cacheFavicon(cacheKey, stored);
+        return stored;
+      })
+      .finally(() => faviconInFlight.delete(cacheKey));
+    faviconInFlight.set(cacheKey, task);
+  }
+  return task;
 }
 
 function jsonLdScript(value) {
@@ -1899,6 +1936,15 @@ app.get('/favicons', faviconRateLimit, async (req, res) => {
   }
 });
 
+app.get('/source-avatars/:id', faviconRateLimit, async (req, res) => {
+  const source = fetcher.getSourceById(String(req.params.id || ''));
+  if (!source || !Array.isArray(source.feeds) || !source.feeds.some(item => routing.isTwitterFeed(item))
+      || !normalizeTwitterAvatarUrl(source.avatarUrl)) return res.sendStatus(404);
+  const avatar = await loadTwitterAvatar(source);
+  if (!avatar) return res.sendStatus(502);
+  return sendFavicon(res, avatar);
+});
+
 app.get('/sitemap.xml', (req, res) => {
   res.setHeader('Cache-Control', 'public, max-age=900');
   res.type('application/xml').send(renderSitemap(req));
@@ -1984,7 +2030,8 @@ app.post('/api/me/rss-preview', requirePersonalIdentity, async (req, res) => {
           latestTitle: latest ? String(latest.title || '').trim() : '',
         });
       } catch (error) {
-        lastError = `${internal ? '' : url}${internal ? '内部通道' : ': '}${error.message || error}`;
+        const viaInternal = routing.isInternalRsshubTarget(url);
+        lastError = `${viaInternal ? '内部通道' : `${url}: `}${error.message || error}`;
       }
     }
     const twitterInternal = routing.isTwitterFeed(canonical) && internal;
@@ -2753,7 +2800,7 @@ function twitterSourceMetas() {
     .filter(meta => {
       if (meta.manual || meta.deleted || !meta.enabled) return false;
       const source = fetcher.getSourceById(meta.id);
-      return Boolean(source && (source.feeds || []).some(feed => routing.isTwitterFeed(feed)));
+      return Boolean(source && (source.feeds || []).some(feed => routing.isInternalRouteFeed(feed)));
     })
     .map(meta => ({
       id: meta.id,

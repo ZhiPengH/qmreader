@@ -251,6 +251,17 @@ const AI_PROVIDER_PRESETS = [
     description: '月之暗面 Kimi',
   },
   {
+    id: 'mimo',
+    name: '小米 MiMo',
+    providerType: 'openai_compatible',
+    category: '国内大模型',
+    baseUrl: 'https://api.xiaomimimo.com/v1',
+    defaultModel: 'mimo-v2.6-flash',
+    quickModels: ['mimo-v2.6-flash', 'mimo-v2.6-pro'],
+    apiKeyUrl: 'https://platform.xiaomimimo.com/#/console/api-keys',
+    description: '小米 MiMo-V2.6 系列，OpenAI 兼容接口',
+  },
+  {
     id: 'zhipu',
     name: '智谱',
     providerType: 'openai_compatible',
@@ -1367,14 +1378,22 @@ function faviconTargetUrl(siteUrl, domain) {
   return domain ? `https://${domain}` : '';
 }
 
-function faviconHtml(siteUrl, name, size = 17, eager = false) {
+function faviconHtml(siteUrl, name, size = 17, eager = false, imageSrc = '') {
   const d = domainOf(siteUrl);
   const letter = ((name || '?').trim()[0] || '?').toUpperCase();
   const safeSize = Math.max(12, Math.min(Number(size) || 17, 48));
-  if (!d) return `<span class="letter-icon" style="--icon-size:${safeSize}px">${escapeHtml(letter)}</span>`;
-  const src = `/favicons?domain_url=${encodeURIComponent(faviconTargetUrl(siteUrl, d))}&sz=${Math.max(32, safeSize * 4)}`;
+  if (!imageSrc && !d) return `<span class="letter-icon" style="--icon-size:${safeSize}px">${escapeHtml(letter)}</span>`;
+  const src = imageSrc || `/favicons?domain_url=${encodeURIComponent(faviconTargetUrl(siteUrl, d))}&sz=${Math.max(32, safeSize * 4)}`;
   return `<img class="favicon" style="--icon-size:${safeSize}px" src="${escapeHtml(src)}" loading="${eager ? 'eager' : 'lazy'}" decoding="async" referrerpolicy="no-referrer"
     onerror="fallbackFavicon(this, '${escapeJsString(letter)}')" />`;
+}
+
+function sourceIconHtml(source, size = 17, eager = false) {
+  if (!source) return '';
+  const imageSrc = source.id && source.avatarUrl
+    ? `/source-avatars/${encodeURIComponent(source.id)}?v=${encodeURIComponent(source.avatarUrl)}`
+    : '';
+  return faviconHtml(source.siteUrl, source.name, size, eager, imageSrc);
 }
 
 function isLikelyEnglishTitle(title) {
@@ -2051,7 +2070,7 @@ function renderSidebar() {
         </div>`}
         <div class="feed-item-main">
           <button type="button" class="feed-item" data-id="${escapeHtml(s.id)}">
-            ${faviconHtml(s.siteUrl, s.name, 17, true)}
+            ${sourceIconHtml(s, 17, true)}
             <span class="fname" title="${escapeHtml(s.name)}">${escapeHtml(s.name)}</span>
             ${s.pinned ? '<span class="pin-mark" title="已置顶">' + iconMarkup('pin') + '</span>' : ''}
             ${s.status === 'error' ? '<span class="err-dot" title="抓取失败"></span>' : ''}
@@ -3195,7 +3214,7 @@ function renderArticleInfoPanel(entry = state.activeEntry) {
   body.innerHTML = `
     <div class="article-info-group">
       <span class="article-info-label">来源</span>
-      <div class="article-info-source">${src ? faviconHtml(src.siteUrl, src.name, 16) : ''}<strong>${escapeHtml(sourceNameForEntry(entry) || '未知来源')}</strong></div>
+      <div class="article-info-source">${src ? sourceIconHtml(src, 16) : ''}<strong>${escapeHtml(sourceNameForEntry(entry) || '未知来源')}</strong></div>
       <div class="article-info-meta">${escapeHtml([entry.author, entry.published ? new Date(entry.published).toLocaleString('zh-CN') : ''].filter(Boolean).join(' · ') || '无时间信息')}</div>
     </div>
     <div class="article-info-grid">
@@ -3438,6 +3457,14 @@ function resetQuickSubPreview() {
   if (!quickSub.busy) setQuickSubButton('预览');
 }
 
+function refreshQuickSubCategoryOptions() {
+  const select = $('#submit-link-category');
+  if (!select) return;
+  const previous = select.value || 'article';
+  select.innerHTML = allRssGroups().map(name =>
+    `<option value="${escapeHtml(name)}"${name === previous ? ' selected' : ''}>${escapeHtml(categoryLabel(name))}</option>`).join('');
+}
+
 function openSubmitLinkModal() {
   if (!requirePersonalIdentity()) return false;
   quickSub.previewUrl = '';
@@ -3448,7 +3475,7 @@ function openSubmitLinkModal() {
   const title = $('#submit-link-title');
   title.value = '';
   title.dataset.autoFilled = '0';
-  $('#submit-link-category').value = 'article';
+  refreshQuickSubCategoryOptions();
   resetQuickSubMeta();
   setQuickSubButton('预览');
   $('#submit-link-modal').classList.remove('hidden');
@@ -3660,7 +3687,7 @@ function renderList() {
       <div class="entry-main">
         <div class="entry-kicker">
           <div class="entry-source-line">
-          ${src ? faviconHtml(src.siteUrl, src.name, 13) : ''}
+          ${src ? sourceIconHtml(src, 13) : ''}
             <span class="src">${escapeHtml(sourceName)}</span>
           </div>
           <time class="entry-time" datetime="${escapeHtml(e.published || '')}">${escapeHtml(publishedLabel)}</time>
@@ -5913,8 +5940,10 @@ function normalizeCategoryInput(value) {
   return hit ? hit[0] : raw;
 }
 
+const RSS_BUILTIN_CATEGORY_KEYS = ['article', 'news', 'podcast'];
+
 function knownCategories() {
-  const list = ['article', 'news', 'podcast'];
+  const list = [...RSS_BUILTIN_CATEGORY_KEYS];
   for (const s of state.sources) {
     const cat = s.category || 'article';
     if (!list.includes(cat)) list.push(cat);
@@ -6033,7 +6062,7 @@ function renderRssGroups() {
     .map(name => {
       const count = state.rssSources.filter(s => !s.deleted && (s.category || 'article') === name).length;
       const active = filter === name;
-      return `<div class="rss-group-chip ${rssGroupColorClass(name)}${active ? ' active' : ''}" data-group="${escapeHtml(name)}" role="button" tabindex="0" aria-pressed="${active}" title="筛选该分组">
+      return `<div class="rss-group-chip ${rssGroupColorClass(name)}${active ? ' active' : ''}" data-group="${escapeHtml(name)}" role="button" tabindex="0" aria-pressed="${active}" title="点击筛选 · 双击改名 · × 删除">
         <span>${escapeHtml(categoryLabel(name))}${count ? ` <span class="rss-group-count">${count}</span>` : ''}</span>
         <button type="button" class="rss-group-close" data-group-close="${escapeHtml(name)}" aria-label="删除分组" title="删除分组（订阅移入文章）">×</button>
       </div>`;
@@ -6071,6 +6100,71 @@ function addRssGroup() {
     if (event.key === 'Escape') { event.preventDefault(); finish(false); }
   };
   input.onblur = () => finish(false);
+}
+
+function beginRssGroupRename(chip) {
+  const name = chip?.dataset?.group || '';
+  if (!name || !chip.isConnected) return;
+  if (!allRssGroups().includes(name)) return;
+  state.rssGroupRename = { group: name };
+  const wrap = document.createElement('span');
+  wrap.className = 'rss-group-chip rss-group-editing';
+  wrap.innerHTML = `<input id="rss-group-rename-input" maxlength="24" value="${escapeHtml(name)}" />`;
+  chip.replaceWith(wrap);
+  const input = wrap.querySelector('input');
+  input.focus();
+  input.select();
+}
+
+async function commitRssGroupRename(nextName) {
+  const rename = state.rssGroupRename;
+  if (!rename) return false;
+  const bar = $('#rss-group-bar');
+  const input = $('#rss-group-rename-input');
+  const value = normalizeCategoryInput(nextName !== undefined ? nextName : (input ? input.value : ''));
+  const finishLocal = () => {
+    state.rssGroupRename = null;
+    renderRssGroups();
+  };
+  if (!value) {
+    finishLocal();
+    return false;
+  }
+  if (value !== rename.group && allRssGroups().includes(value)) {
+    toast(`分组「${categoryLabel(value)}」已存在`);
+    finishLocal();
+    return false;
+  }
+  if (value === rename.group) {
+    finishLocal();
+    return true;
+  }
+  const targets = state.rssSources.filter(s => !s.deleted && (s.category || 'article') === rename.group);
+  let failed = 0;
+  for (const source of targets) {
+    try {
+      await api(`/api/me/sources/${encodeURIComponent(source.id)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ category: value }),
+      });
+    } catch {
+      failed += 1;
+    }
+  }
+  const customs = customRssGroups();
+  const next = customs.filter(item => item !== rename.group && item !== value);
+  next.push(value);
+  persistCustomRssGroups(next);
+  if (state.rssCategoryFilter === rename.group) state.rssCategoryFilter = value;
+  finishLocal();
+  await loadRssSources();
+  await loadSources();
+  renderSidebar();
+  toast(failed
+    ? `分组已改名「${categoryLabel(value)}」，${failed} 个订阅移动失败，可在列表中重试`
+    : `分组已改名「${categoryLabel(value)}」`);
+  return failed === 0;
 }
 
 function hideRssGroupConfirm() {
@@ -6197,7 +6291,7 @@ async function refreshAfterRssMutation() {
   renderList();
   if (state.activeEntry) {
     const source = sourceById(state.activeEntry.sourceId);
-    $('#reader-source').innerHTML = `${source ? faviconHtml(source.siteUrl, source.name, 14) : ''}<span>${escapeHtml(sourceNameForEntry(state.activeEntry))}</span>`;
+    $('#reader-source').innerHTML = `${source ? sourceIconHtml(source, 14) : ''}<span>${escapeHtml(sourceNameForEntry(state.activeEntry))}</span>`;
   }
 }
 
@@ -7570,7 +7664,7 @@ async function openEntry(e, { tab = null, focus = null, aiAssetId = '', commentI
   $('#reader-empty').classList.add('hidden');
   $('#reader').classList.remove('hidden');
   renderAdminEntryControls();
-  $('#reader-source').innerHTML = `${src ? faviconHtml(src.siteUrl, src.name, 14) : ''}<span>${escapeHtml(sourceNameForEntry(e))}</span>`;
+  $('#reader-source').innerHTML = `${src ? sourceIconHtml(src, 14) : ''}<span>${escapeHtml(sourceNameForEntry(e))}</span>`;
   renderTitle(e);
   updateRewriteUiLabels(e);
   document.title = readerRouteTitle(e, requestedFocus);
@@ -8196,7 +8290,7 @@ function renderManage(target = '#manage-list', statusTarget = '#manage-status') 
       ? (s.status === 'ok' ? `${s.entryCount} 篇` : s.status === 'error' ? '抓取失败' : s.status === 'stale' ? '缓存' : '待抓取')
       : '已禁用';
     row.innerHTML = `
-      ${faviconHtml(s.siteUrl, s.name)}
+      ${sourceIconHtml(s)}
       <div class="m-info">
         <div class="m-name">${escapeHtml(s.name)} <span style="font-weight:400;color:var(--text-2);font-size:11px">${CATEGORY_LABELS[s.category]}</span></div>
         ${s.note || s.description ? `<div class="m-note">${escapeHtml(s.note || s.description)}</div>` : ''}
@@ -9820,6 +9914,16 @@ $('#rss-group-bar').addEventListener('click', async event => {
     state.rssCategoryFilter = state.rssCategoryFilter === chip.dataset.group ? '' : chip.dataset.group;
     renderRssSources();
   }
+});
+$('#rss-group-bar').addEventListener('dblclick', event => {
+  const chip = event.target.closest('.rss-group-chip');
+  if (chip) beginRssGroupRename(chip);
+});
+$('#rss-group-bar').addEventListener('keydown', event => {
+  const input = event.target.closest && event.target.id === 'rss-group-rename-input' ? event.target : null;
+  if (!input) return;
+  if (event.key === 'Enter') { event.preventDefault(); commitRssGroupRename(); }
+  if (event.key === 'Escape') { event.preventDefault(); state.rssGroupRename = null; renderRssGroups(); }
 });
 $('#rss-inactive').onclick = toggleInactiveRssSources;
 $('#rss-source-list').onclick = handleRssAction;
