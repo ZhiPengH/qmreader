@@ -24,6 +24,7 @@ function harness(stubs = {}) {
     loadContributors: async () => {},
     loadEntries: stubs.loadEntries || (async () => {}),
     visibleEntries: stubs.visibleEntries || (() => context.state.entries),
+    isCompactViewport: stubs.isCompactViewport || (() => false),
     openEntry: stubs.openEntry || (async entry => { opens.push(entry); }),
     hintSourceRefresh: (id, reason) => hints.push([id, reason]),
   };
@@ -71,6 +72,17 @@ test('a slow list load does not open a stale source article after switching', as
   c.state.filterSource = 's2'; // 加载期间用户已切到别的源
   release();
   await pending;
+  assert.equal(opens.length, 0);
+});
+
+test('a compact viewport (mobile drawer) selecting a source shows the list without auto-opening', async () => {
+  // 手机版侧栏是抽屉：点订阅应收起抽屉展示文章列表，而不是直接进阅读态。
+  const { context: c, opens } = harness({
+    isCompactViewport: () => true,
+    loadEntries: async () => { c.state.entries = [{ id: 'newest', sourceId: 's1' }]; },
+  });
+  await c.selectSource('s1');
+  assert.equal(c.state.filterSource, 's1');
   assert.equal(opens.length, 0);
 });
 
