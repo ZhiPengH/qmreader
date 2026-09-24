@@ -1416,6 +1416,21 @@ function timeAgo(ts) {
   return new Date(ts).toLocaleDateString('zh-CN');
 }
 
+// 极简列表的紧凑相对时间：<1m now，<1h Nm，<7d Nd，更早 YYYY-MM
+function minimalTimeAgo(ts) {
+  if (!ts) return '';
+  const diff = Date.now() - ts;
+  const m = Math.floor(diff / 60000);
+  if (m < 1) return 'now';
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h`;
+  const d = Math.floor(h / 24);
+  if (d < 7) return `${d}d`;
+  const dt = new Date(ts);
+  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}`;
+}
+
 function shanghaiParts(ts = Date.now()) {
   const parts = new Intl.DateTimeFormat('zh-CN', {
     timeZone: 'Asia/Shanghai',
@@ -2359,14 +2374,14 @@ root.addEventListener('keydown', event => {
 
 async function moveSourceCategory(id, category) {
   const source = sourceById(id);
-  if (!source || !Object.hasOwn(CATEGORY_LABELS, category) || source.category === category) return;
+  // 分组改名后 category 是自定义键（如「快讯」），不能只认内置 CATEGORY_LABELS；
+  // 菜单项来自 knownCategories()，这里同源校验即可。
+  if (!source || !knownCategories().includes(category) || source.category === category) return;
   try {
     const data = await api('/api/me/sources/' + encodeURIComponent(id), { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ category }) });
     if (data?.source) Object.assign(source, data.source);
-    renderSidebar();
-    renderList();
-    updateListTitle();
-    toast('已移动到' + CATEGORY_LABELS[category]);
+    toast('已移动到' + categoryLabel(category));
+    location.reload(); // 立即整页刷新，侧栏分组马上反映新分类
   } catch (error) { toast('移动失败：' + error.message); }
 }
 
@@ -2785,6 +2800,7 @@ function homeAssetActivityItems(limit = 24) {
 function currentListScope() {
   if (state.view === 'hot') return 'hot';
   if (state.view === 'unread') return 'unread';
+  if (state.view === 'minimal') return 'minimal';
   return 'latest';
 }
 
@@ -2804,7 +2820,7 @@ function renderListScopeBar() {
 
 function selectListScope(scope = 'latest') {
   if (scope === 'hot') return selectView('hot');
-  const next = ['latest', 'hot', 'unread'].includes(scope) ? scope : 'latest';
+  const next = ['latest', 'minimal', 'hot', 'unread'].includes(scope) ? scope : 'latest';
   if (next === 'latest') {
     state.view = 'all';
     state.assetFilter = null;
@@ -3636,6 +3652,7 @@ function renderList() {
   }
   $('#app').classList.toggle('view-assets', state.view === 'assets');
   $('#app').classList.toggle('view-favorites', state.view === 'favorites');
+  $('#app').classList.toggle('view-minimal', state.view === 'minimal');
   $('#app').classList.toggle('home-assets', isHomeScope() && state.homeTab === 'assets');
   renderListScopeBar();
   $('#mark-read-btn').classList.toggle('hidden', isHomeScope() && state.homeTab === 'assets');
@@ -3666,6 +3683,11 @@ function renderList() {
   }
   const visibleList = list.slice(0, state.entryRenderLimit);
   const frag = document.createDocumentFragment();
+  if (state.view === 'minimal') {
+    for (const e of visibleList) frag.appendChild(minimalEntryCard(e));
+    el.appendChild(frag);
+    return;
+  }
   for (const e of visibleList) {
     const src = sourceById(e.sourceId);
     const assetsHtml = assetBadgesHtml(e, { interactive: true });
@@ -3777,11 +3799,38 @@ function renderList() {
   el.appendChild(frag);
 }
 
+// 极简列表：单行卡片——截断标题 + 紧凑时间，无摘要/图片/徽章
+function minimalTitleText(title) {
+  const text = String(title || '');
+  return text.length > 12 ? text.slice(0, 12) + '…' : text;
+}
+function minimalEntryCard(e) {
+  const row = document.createElement('div');
+  row.className = 'entry-card minimal-card' + (state.read.has(e.id) ? ' read' : '') + (state.activeEntry?.id === e.id ? ' active' : '');
+  row.dataset.id = e.id;
+  row.tabIndex = 0;
+  row.setAttribute('role', 'button');
+  row.setAttribute('aria-label', e.titleZh || e.title || '打开文章');
+  const time = minimalTimeAgo(e.publishedTs);
+  row.innerHTML = `
+    <span class="minimal-dot"></span>
+    <span class="minimal-title">${escapeHtml(minimalTitleText(e.titleZh || e.title))}</span>
+    <time class="minimal-time" datetime="${escapeHtml(e.published || '')}">${escapeHtml(time)}</time>`;
+  row.onclick = () => openEntry(e);
+  row.onkeydown = (event) => {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    event.preventDefault();
+    openEntry(e);
+  };
+  return row;
+}
+
 function updateListTitle() {
   let title = '全部';
   if (state.filterSource) title = sourceById(state.filterSource)?.name || state.filterSource;
   else if (state.filterCategory) title = CATEGORY_LABELS[state.filterCategory];
   else if (state.view === 'hot') title = '广场';
+  else if (state.view === 'minimal') title = '极简';
   else if (state.view === 'unread') title = '未读';
   else if (state.view === 'starred') title = '收藏';
   else if (state.view === 'history') title = '浏览记录';
@@ -10504,6 +10553,7 @@ const plaza = window.QMPlaza.create({
   openEntry: (entry, options) => openEntry(entry, options),
   closeReader: () => closeReaderFromRoute({ rerenderList: false }),
   mergeStats: (id, stats) => mergeEntryStats(id, stats, { rerenderList: false }),
+  categoryLabel: name => categoryLabel(name),
   toggleSidebar: () => setFeedDrawer(!state.feedDrawerOpen),
   edge: delta => toast(delta > 0 ? '已是本批最后一篇' : '已是本批第一篇'),
 });
