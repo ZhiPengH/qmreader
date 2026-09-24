@@ -123,6 +123,18 @@ test('category 过滤：只返回该分类的文章并聚合 categories 清单',
   await request('/api/plaza?category=' + 'x'.repeat(25), { status: 400 });
 });
 
+test('广场可筛选含 π 的自定义分类', async t => {
+  const { request, db } = await fixture(t);
+  for (const category of ['人文π', '科技π', '投资π', '聊摘π']) {
+    db(`store.saveSourceOverride('hackernews', { category: ${JSON.stringify(category)} });`);
+    const all = await request('/api/plaza?mode=all&limit=1');
+    assert.ok(all.categories.includes(category), `${category} 应出现在分类 chips`);
+    const filtered = await request('/api/plaza?mode=all&limit=10&category=' + encodeURIComponent(category));
+    assert.equal(filtered.total, 409);
+    assert.ok(filtered.entries.every(entry => entry.category === category));
+  }
+});
+
 test('categories 清单来自启用订阅源而非文章池：有源无文章的分类也在列', async t => {
   const { request, db } = await fixture(t);
   // 造一个启用源但零文章的分类（lexfridman 属 podcast，清掉它的文章就剩 source 无 entry）

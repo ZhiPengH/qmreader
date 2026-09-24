@@ -3308,7 +3308,7 @@ function plazaQueryError(query, { allowed = {}, integers = [] } = {}) {
 app.get('/api/plaza', requirePersonalIdentity, (req, res) => {
   try {
     const invalid = plazaQueryError(req.query, {
-      allowed: { mode: /^(all|random|personal)$/, sort: /^(latest|oldest)$/, unread: /^[01]$/, seed: /^[\w.-]{1,64}$/, limit: /^\d+$/, category: /^[\w\u4e00-\u9fff-]{0,24}$/ },
+      allowed: { mode: /^(all|random|personal)$/, sort: /^(latest|oldest)$/, unread: /^[01]$/, seed: /^[\w.-]{1,64}$/, limit: /^\d+$/, category: /^[^<>"'&]{0,24}$/ },
       integers: ['limit'],
     });
     if (invalid) return res.status(400).json({ error: invalid });
