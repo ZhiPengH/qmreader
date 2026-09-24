@@ -279,7 +279,7 @@ test('production document loads plaza assets and keeps original reader/context n
   assert.equal($('#plaza-root').parent().attr('id'), 'app');
   assert.equal($('#plaza-reader-tags-toggle').closest('#reader').length, 1);
   assert.equal($('[data-view="hot"] .view-label').text(), '广场');
-  assert.equal($('[data-list-scope="hot"]').text(), '广场');
+  assert.equal($('[data-list-scope="minimal"]').text(), '极简');
 });
 
 test('plaza URLs and history reader updates preserve the plaza return route', () => {
@@ -590,7 +590,7 @@ test('first entry loads a detached frozen snapshot with all/latest/masonry defau
   await plaza.activate();
   const snap = plaza.snapshot();
   assert.deepEqual(plain(snap.order), ['a', 'b', 'c']);
-  assert.deepEqual(plain(snap.settings), { mode: 'all', view: 'masonry', sort: 'latest', unread: false, seed: 'batch-1' });
+  assert.deepEqual(plain(snap.settings), { mode: 'all', view: 'masonry', sort: 'latest', unread: false, category: '', seed: 'batch-1' });
   assert.equal(snap.loaded, 2);
   snap.order.reverse();
   snap.settings.mode = 'random';
@@ -598,4 +598,19 @@ test('first entry loads a detached frozen snapshot with all/latest/masonry defau
   const url = new URL(calls[0][0], 'http://local');
   assert.equal(url.pathname, '/api/plaza');
   assert.equal(url.searchParams.get('limit'), '24');
+});
+
+test('分类 chips：change({category}) 触发重载并带 query 参数，snapshot 暴露 categories', async () => {
+  const calls = [];
+  const { plaza } = harness({ api: async url => { calls.push(url); return { ...payload(), categories: ['article', 'news'] }; } });
+  await plaza.activate();
+  assert.deepEqual(plain(plaza.snapshot().categories), ['article', 'news']);
+  assert.equal(calls[0].includes('category='), false); // 默认全部：不带参数
+  await plaza.change({ category: 'news' });
+  const reloadCall = calls.find(url => url.includes('category=news'));
+  assert(reloadCall, '切换分类要触发一次带 category 的重载');
+  assert.equal(plaza.snapshot().settings.category, 'news');
+  await plaza.change({ category: '' }); // 切回全部
+  assert(calls.filter(url => url.includes('/api/plaza?')).length >= 3);
+  assert.equal(plaza.snapshot().settings.category, '');
 });

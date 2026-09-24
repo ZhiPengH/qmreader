@@ -75,6 +75,9 @@
 .plaza-filters label { display: flex; align-items: center; gap: 7px; white-space: nowrap; }
 .plaza-filters input { width: 15px; height: 15px; margin: 0; accent-color: var(--accent); }
 .plaza-filters select { border: 0; background: var(--bg-0); color: var(--text-1); font: inherit; padding: 3px 0; }
+.plaza-categories { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.plaza-categories .plaza-btn { padding: 3px 10px; font-size: 12px; }
+.plaza-categories .plaza-btn[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
 #plaza-shown { margin-left: auto; font-variant-numeric: tabular-nums; }
 .plaza-helper { font-size: 12px; color: var(--text-1); line-height: 1.7; margin: 0 0 18px; }
 .plaza-helper:empty { display: none; }

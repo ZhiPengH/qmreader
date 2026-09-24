@@ -105,3 +105,20 @@ test('full library manifest exceeds 400 and remains usable after arrivals and de
   assert.deepEqual(missing.entries.map(e => e.id), ['pool-3', 'pool-2']);
   assert.equal(first.order.includes('arrival'), false);
 });
+
+test('category 过滤：只返回该分类的文章并聚合 categories 清单', async t => {
+  const { request, db } = await fixture(t);
+  // 分池：hackernews(news 类) pool-0..409 中前 300 篇划给 podcast 源，验证过滤与清单
+  db(`store.upsertEntries(Array.from({ length: 90 }, (_, i) => ({ id: 'cat-' + i, sourceId: 'lexfridman', title: 'Pod ' + i, publishedTs: 1000 + i })));`);
+  const all = await request('/api/plaza?mode=all&limit=100');
+  assert.ok(Array.isArray(all.categories) && all.categories.length >= 1, '响应要带 categories 清单');
+  const news = await request('/api/plaza?mode=all&limit=100&category=news');
+  assert.equal(news.total, 409); // 410 - 1(disabled-source)
+  assert.ok(news.entries.every(e => e.category === 'news'));
+  const pod = await request('/api/plaza?mode=all&limit=100&category=podcast');
+  assert.equal(pod.total, 90);
+  assert.ok(pod.entries.every(e => e.category === 'podcast'));
+  // 非法分类值被 400 拒绝（严格校验语义）
+  await request('/api/plaza?category=<script>', { status: 400 });
+  await request('/api/plaza?category=' + 'x'.repeat(25), { status: 400 });
+});
