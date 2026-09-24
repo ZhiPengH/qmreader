@@ -5250,6 +5250,7 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
 }
 .minimal-dot {
   flex: 0 0 auto;
+  align-self: center;
   width: 5px;
   height: 5px;
   border-radius: 50%;

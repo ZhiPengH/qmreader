@@ -3802,7 +3802,7 @@ function renderList() {
 // 极简列表：单行卡片——截断标题 + 紧凑时间，无摘要/图片/徽章
 function minimalTitleText(title) {
   const text = String(title || '');
-  return text.length > 12 ? text.slice(0, 12) + '…' : text;
+  return text.length > 30 ? text.slice(0, 30) + '…' : text;
 }
 function minimalEntryCard(e) {
   const row = document.createElement('div');

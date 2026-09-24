@@ -122,3 +122,13 @@ test('category 过滤：只返回该分类的文章并聚合 categories 清单',
   await request('/api/plaza?category=<script>', { status: 400 });
   await request('/api/plaza?category=' + 'x'.repeat(25), { status: 400 });
 });
+
+test('categories 清单来自启用订阅源而非文章池：有源无文章的分类也在列', async t => {
+  const { request, db } = await fixture(t);
+  // 造一个启用源但零文章的分类（lexfridman 属 podcast，清掉它的文章就剩 source 无 entry）
+  db(`const s = new (require('node:sqlite').DatabaseSync)(process.env.QMREADER_DB_FILE); s.prepare("DELETE FROM entries WHERE source_id = 'lexfridman'").run(); s.close();`);
+  const all = await request('/api/plaza?mode=all&limit=1');
+  assert.equal(all.categories.includes('podcast'), true, '源存在就该在 chips 里，即使暂时没文章');
+  const pod = await request('/api/plaza?mode=all&limit=10&category=podcast');
+  assert.equal(pod.total, 0, '没文章的 category 过滤为空但不报错');
+});

@@ -21,7 +21,7 @@ test('scope bar offers 列表 and 极简 instead of 最新 and 广场', () => {
   assert.doesNotMatch(html, /data-list-scope="hot"[^>]*>广场</);
 });
 
-test('minimal scope renders one-line cards: title capped at 12 chars, compact time, no summary/media', () => {
+test('minimal scope renders one-line cards: title capped at 30 chars, compact time, no summary/media', () => {
   const cards = [];
   const makeEl = () => ({ className: '', dataset: {}, innerHTML: '', tabIndex: 0, onclick: null, onkeydown: null, setAttribute() {}, appendChild() {} });
   const context = {
@@ -51,7 +51,7 @@ test('minimal scope renders one-line cards: title capped at 12 chars, compact ti
     minimalTimeAgo: ts => { context.minimalCalls = (context.minimalCalls || 0) + 1; return ts ? '30m' : ''; },
     escapeHtml: s => String(s),
     lucideIcon: () => '',
-    minimalTitleText: title => (title || '').length > 12 ? (title || '').slice(0, 12) + '…' : (title || ''),
+    minimalTitleText: title => (title || '').length > 30 ? (title || '').slice(0, 30) + '…' : (title || ''),
     minimalEntryCard: e => { cards.push(e.id); return makeEl(); },
   };
   vm.createContext(context);
@@ -86,4 +86,15 @@ test('selectListScope accepts minimal and keeps latest/hot routing intact', () =
   assert.equal(context.pickedView, undefined); // minimal 不走 plaza
   context.selectListScope('hot');
   assert.equal(context.pickedView, 'hot'); // 广场（plaza）入口仍在
+});
+
+test('minimalTitleText 截断阈值是 30 字符（12→30 批注修正）', () => {
+  const context = {};
+  vm.createContext(context);
+  vm.runInContext(between('function minimalTitleText(', 'function minimalEntryCard('), context);
+  const t30 = '一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十';
+  assert.equal(context.minimalTitleText(t30), t30, '恰好 30 字不截断');
+  assert.equal(context.minimalTitleText(t30 + '长'), t30 + '…', '31 字截断为 30+…');
+  assert.equal(context.minimalTitleText('短标题'), '短标题');
+  assert.equal(context.minimalTitleText(''), '');
 });

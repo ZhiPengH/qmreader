@@ -3322,15 +3322,16 @@ app.get('/api/plaza', requirePersonalIdentity, (req, res) => {
     });
     res.json({ order: entries.map(entry => entry.id), entries: entries.slice(0, Number(req.query.limit || 24)),
       total: entries.length, revision, preferences, tagging: plazaTagger.state(req.user.id),
-      categories: plazaCategories(pool) });
+      categories: plazaCategories() });
   } catch (error) { sendError(res, error); }
 });
 
-// 分类清单来自当前广场全集（有文章的分类才上榜），按文章量降序。
-function plazaCategories(pool) {
+// 分类清单来自订阅源表（启用的源按分类去重）：有源就有入口，不等池里出现文章；按源量降序。
+function plazaCategories() {
   const counts = new Map();
-  for (const entry of pool) {
-    const cat = entry.category || 'article';
+  for (const source of fetcher.getSourcesMeta()) {
+    if (!source.enabled || source.deleted) continue;
+    const cat = source.category || 'article';
     counts.set(cat, (counts.get(cat) || 0) + 1);
   }
   return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([name]) => name);
