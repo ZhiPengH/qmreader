@@ -91,3 +91,25 @@ test('负反馈温和降低相近内容优先级，不删除文章或拉黑整�
   assert.deepEqual(ranked.map(row => row.id), ['design', 'related', 'same-source-new-topic']);
   assert.equal(plaza().rankPlazaEntries(rows, { mode: 'all' }).length, rows.length);
 });
+
+test('分类筛选只保留该分类的文章，空串等同不过滤，且与未读/负反馈叠加', () => {
+  const rows = [
+    entry('a1', { category: 'article', publishedTs: 30 }),
+    entry('n1', { category: 'news', publishedTs: 20 }),
+    entry('k1', { category: '快讯', publishedTs: 10 }),
+    entry('a2', { category: 'article', publishedTs: 5, read: true }),
+  ];
+  const p = plaza();
+  // 只留 article
+  assert.deepEqual(p.rankPlazaEntries(rows, { category: 'article' }).map(row => row.id), ['a1', 'a2']);
+  // 中文自定义分组同样生效
+  assert.deepEqual(p.rankPlazaEntries(rows, { category: '快讯' }).map(row => row.id), ['k1']);
+  // 空串/未传 = 不过滤（既有行为）
+  assert.equal(p.rankPlazaEntries(rows).length, 4);
+  // 与仅未读叠加
+  assert.deepEqual(p.rankPlazaEntries(rows, { category: 'article', unreadOnly: true }).map(row => row.id), ['a1']);
+  // 缺失 category 的文章在显式筛选时被排除，在不过滤时保留
+  const withMissing = [...rows, entry('no-cat', { publishedTs: 1 })];
+  assert.equal(p.rankPlazaEntries(withMissing, { category: 'article' }).some(row => row.id === 'no-cat'), false);
+  assert.equal(p.rankPlazaEntries(withMissing).length, 5);
+});

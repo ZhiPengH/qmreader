@@ -3308,21 +3308,33 @@ function plazaQueryError(query, { allowed = {}, integers = [] } = {}) {
 app.get('/api/plaza', requirePersonalIdentity, (req, res) => {
   try {
     const invalid = plazaQueryError(req.query, {
-      allowed: { mode: /^(all|random|personal)$/, sort: /^(latest|oldest)$/, unread: /^[01]$/, seed: /^[\w.-]{1,64}$/, limit: /^\d+$/ },
+      allowed: { mode: /^(all|random|personal)$/, sort: /^(latest|oldest)$/, unread: /^[01]$/, seed: /^[\w.-]{1,64}$/, limit: /^\d+$/, category: /^[\w\u4e00-\u9fff-]{0,24}$/ },
       integers: ['limit'],
     });
     if (invalid) return res.status(400).json({ error: invalid });
     if (req.query.limit !== undefined && (Number(req.query.limit) < 1 || Number(req.query.limit) > 100)) return res.status(400).json({ error: 'limit must be between 1 and 100' });
     const revision = store.getPlazaLibraryStatus().revision;
     const preferences = plazaPreferences(req.user.id);
-    const entries = rankPlazaEntries(store.getPlazaEntries({ userId: req.user.id, maxRowId: revision }), {
+    const pool = store.getPlazaEntries({ userId: req.user.id, maxRowId: revision }).map(plazaMetadata);
+    const entries = rankPlazaEntries(pool, {
       mode: req.query.mode || 'all', sort: req.query.sort || 'latest', seed: req.query.seed || '',
-      unreadOnly: req.query.unread === '1', interests: preferences.interests,
+      unreadOnly: req.query.unread === '1', interests: preferences.interests, category: req.query.category || '',
     });
-    res.json({ order: entries.map(entry => entry.id), entries: entries.slice(0, Number(req.query.limit || 24)).map(plazaMetadata),
-      total: entries.length, revision, preferences, tagging: plazaTagger.state(req.user.id) });
+    res.json({ order: entries.map(entry => entry.id), entries: entries.slice(0, Number(req.query.limit || 24)),
+      total: entries.length, revision, preferences, tagging: plazaTagger.state(req.user.id),
+      categories: plazaCategories(pool) });
   } catch (error) { sendError(res, error); }
 });
+
+// 分类清单来自当前广场全集（有文章的分类才上榜），按文章量降序。
+function plazaCategories(pool) {
+  const counts = new Map();
+  for (const entry of pool) {
+    const cat = entry.category || 'article';
+    counts.set(cat, (counts.get(cat) || 0) + 1);
+  }
+  return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([name]) => name);
+}
 
 app.get('/api/plaza/entries', requirePersonalIdentity, (req, res) => {
   try {

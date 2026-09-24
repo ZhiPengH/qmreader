@@ -7,14 +7,15 @@
     const newSeed = () => adapter.seed ? adapter.seed() : Date.now().toString(36) + Math.random().toString(36).slice(2);
     let saved = {};
     try { saved = JSON.parse(adapter.storage?.getItem(STORAGE_KEY) || '{}'); } catch {}
-    const settings = { mode: ['all', 'random', 'personal'].includes(saved.mode) ? saved.mode : 'all', view: saved.view === 'list' ? 'list' : 'masonry', sort: 'latest', unread: false, seed: newSeed() };
+    const settings = { mode: ['all', 'random', 'personal'].includes(saved.mode) ? saved.mode : 'all', view: saved.view === 'list' ? 'list' : 'masonry', sort: 'latest', unread: false, category: '', seed: newSeed() };
     let confirmedSettings = { ...settings }, failedSettings = null;
     let order = [], entries = new Map(), loaded = 0, revision = 0, newCount = 0;
     let active = false, initialized = false, epoch = 0, loading = false, error = '', readerId = '', position = null;
     let preferences = { interests: [], ignored: [], knownTags: [] }, tagging = { autoEnabled: false };
+    let categories = [];
     let ui = null;
     const emit = (type, data) => { adapter.onChange?.(type, data); ui?.update(type, data); };
-    function snapshot() { return copy({ settings, order, entries: [...entries.values()], loaded, revision, preferences, tagging, active, loading, error, readerId, newCount, pending: [...pendingWrites] }); }
+    function snapshot() { return copy({ settings, order, entries: [...entries.values()], loaded, revision, preferences, tagging, categories, active, loading, error, readerId, newCount, pending: [...pendingWrites] }); }
     function visibleEntries() { return order.slice(0, loaded).map(id => entries.get(id)).filter(Boolean); }
     async function refresh({ shuffle = false } = {}) {
       if (shuffle) settings.seed = newSeed();
@@ -23,10 +24,12 @@
       loading = true; error = ''; emit('state');
       try {
         const query = new URLSearchParams({ mode: settings.mode, sort: settings.mode === 'all' ? settings.sort : 'latest', unread: settings.unread ? '1' : '0', seed: settings.seed, limit: '24' });
+        if (settings.category) query.set('category', settings.category);
         const data = await adapter.api('/api/plaza?' + query);
         if (!active || token !== epoch) return;
         order = [...data.order];
         entries = new Map(data.entries.map(item => [item.id, item]));
+        categories = Array.isArray(data.categories) ? data.categories : [];
         loaded = data.entries.length;
         revision = data.revision; newCount = 0;
         preferences = data.preferences; tagging = data.tagging;
@@ -46,11 +49,12 @@
     async function activate() { active = true; emit('active', true); if (!initialized) await refresh(); }
     function deactivate() { active = false; epoch++; loading = false; close({ restore: false }); emit('active', false); }
     async function change(patch) {
-      const reload = ['mode', 'sort', 'unread'].some(key => key in patch && patch[key] !== settings[key]);
+      const reload = ['mode', 'sort', 'unread', 'category'].some(key => key in patch && patch[key] !== settings[key]);
       if (patch.mode && ['all', 'random', 'personal'].includes(patch.mode)) settings.mode = patch.mode;
       if (patch.view && ['masonry', 'list'].includes(patch.view)) settings.view = patch.view;
       if (patch.sort) settings.sort = patch.sort === 'oldest' ? 'oldest' : 'latest';
       if ('unread' in patch) settings.unread = Boolean(patch.unread);
+      if ('category' in patch) settings.category = typeof patch.category === 'string' ? patch.category : '';
       emit('settings');
       if (reload) {
         close({ restore: false });
@@ -235,7 +239,7 @@
     let columns = [], columnWidth = 0, readerTagId = '', lastTagTrigger = null, suppressTagFocus = false;
     root.innerHTML = `<header class="plaza-heading"><button type="button" class="plaza-btn plaza-mobile-menu" data-sidebar aria-label="展开侧边栏">${icon('panel-left-open')}</button><h1>广场</h1><span id="plaza-total"></span>${button('兴趣偏好', 'data-preferences', 'sliders-horizontal')}</header>
       <div class="plaza-controls"><div class="plaza-modes" role="tablist" aria-label="浏览方式">${[['all', '全部'], ['random', '随便看看'], ['personal', '我喜欢']].map(([mode, label]) => button(label, `role="tab" data-mode="${mode}" aria-selected="${mode === 'all'}"`)).join('')}</div><div class="plaza-layouts" role="group" aria-label="展示方式">${button('瀑布流', 'data-layout="masonry" aria-pressed="true"', 'boxes')}${button('列表', 'data-layout="list" aria-pressed="false"', 'file-text')}</div></div>
-      <div class="plaza-filters"><label id="plaza-sort-label"><select id="plaza-sort" aria-label="排序"><option value="latest">按最新发布</option><option value="oldest">按最早发布</option></select></label><label><input id="plaza-unread" type="checkbox">仅未读</label><span id="plaza-shown"></span>${button('换一批', 'data-shuffle hidden', 'refresh-cw')}</div>
+      <div class="plaza-filters"><label id="plaza-sort-label"><select id="plaza-sort" aria-label="排序"><option value="latest">按最新发布</option><option value="oldest">按最早发布</option></select></label><label><input id="plaza-unread" type="checkbox">仅未读</label><div id="plaza-categories" class="plaza-categories" role="group" aria-label="按分类浏览"></div><span id="plaza-shown"></span>${button('换一批', 'data-shuffle hidden', 'refresh-cw')}</div>
       <p class="plaza-helper" id="plaza-helper"></p><button type="button" id="plaza-update" class="plaza-btn" hidden></button>
       <div id="plaza-feed" class="plaza-feed" aria-label="文章广场"></div><div class="plaza-load-foot"><p id="plaza-load-status" role="status"></p>${button('继续浏览', 'id="plaza-more"')}</div>`;
     const prefs = doc.createElement('dialog');
@@ -300,6 +304,18 @@
       for (const container of [root, prefs, readerTags].filter(Boolean)) container.querySelectorAll('[data-interest]').forEach(b => { b.disabled = s.pending.includes('preferences'); });
       root.querySelectorAll('[data-layout]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.layout === s.settings.view)));
       $('#plaza-sort-label').hidden = s.settings.mode !== 'all'; $('#plaza-sort').value = s.settings.sort; $('#plaza-unread').checked = s.settings.unread;
+      const catBar = $('#plaza-categories');
+      if (catBar) {
+        const label = name => (adapter.categoryLabel ? adapter.categoryLabel(name) : name) || name;
+        const next = ['全部', ...s.categories.map(label)].join('\u0000');
+        if (catBar.dataset.rendered !== next) {
+          catBar.dataset.rendered = next;
+          catBar.innerHTML = button('全部', 'data-category="" aria-pressed="' + !s.settings.category + '"')
+            + s.categories.map(name => button(label(name), `data-category="${esc(name)}" aria-pressed="${s.settings.category === name}"`)).join('');
+        } else {
+          catBar.querySelectorAll('[data-category]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.category === s.settings.category)));
+        }
+      }
       $('[data-shuffle]').hidden = s.settings.mode !== 'random';
       $('#plaza-total').textContent = s.order.length ? s.order.length + ' 篇' : '';
       $('#plaza-shown').textContent = s.loaded + ' / ' + s.order.length;
@@ -342,6 +358,7 @@
       else if (b.dataset.like) await plaza.react(b.dataset.like, 'like');
       else if (b.dataset.dislike) await plaza.react(b.dataset.dislike, 'dislike');
       else if (b.dataset.mode) await plaza.change({ mode: b.dataset.mode });
+      else if (b.dataset.category !== undefined && b.closest('#plaza-categories')) await plaza.change({ category: b.dataset.category });
       else if (b.dataset.layout) { closeOverlays(); await plaza.change({ view: b.dataset.layout }); }
       else if (b.getAttribute('data-shuffle') !== null && b.getAttribute('data-shuffle') !== undefined) await plaza.refresh({ shuffle: true });
       else if (b.dataset.interest) await plaza.setInterest({ name: b.dataset.interest, kind: b.dataset.kind }, b.getAttribute('aria-pressed') !== 'true');
